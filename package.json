@@ -11,7 +11,8 @@
     "prisma:push": "npm run prisma:push --workspace backend",
     "setup": "npm install && npm run prisma:generate && npm run db:init",
     "publish": "bash ./publish.sh",
-    "db:init": "npm run db:init --workspace backend"
+    "db:init": "npm run db:init --workspace backend",
+    "deploy:start": "node backend/dist/scripts/init-database.js && npm start"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
