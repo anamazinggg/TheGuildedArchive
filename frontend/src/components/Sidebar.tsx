@@ -1,28 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-
-const navItems = [
-  { label: 'Dashboard', path: '/', icon: '📊', badge: null },
-  { label: 'Inventory', path: '/inventory', icon: '💎', badge: null },
-  { label: 'Listings', path: '/listings', icon: '🏪', badge: null },
-  { label: 'Orders', path: '/orders', icon: '📦', badge: '0' },
-  { label: 'Revenue', path: '/revenue', icon: '💰', badge: null },
-  { label: 'Expenses', path: '/expenses', icon: '📉', badge: null },
-  { label: 'Analytics', path: '/analytics', icon: '📈', badge: null },
-  { label: 'Action Center', path: '/actions', icon: '⚡', badge: '!' },
-  { label: 'Storage', path: '/storage', icon: '🗄️', badge: null },
-  { label: 'Tags', path: '/tags', icon: '🏷️', badge: null },
-  { label: 'Integrations', path: '/integrations', icon: '🔗', badge: null },
-  { label: 'Reports', path: '/reports', icon: '📋', badge: null },
-  { label: 'Settings', path: '/settings', icon: '⚙️', badge: null },
-];
-
-const bottomItems = [
-  { label: 'Scan QR', path: '/scan-qr', icon: '📷', badge: null },
-];
+import { useAuth } from '../context/AuthContext';
+import { api } from '../api/client';
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const { token } = useAuth();
+  const [awaitingShipment, setAwaitingShipment] = useState(0);
+  const [actionCount, setActionCount] = useState(0);
+
+  useEffect(() => {
+    if (!token) return;
+    // Fetch awaiting shipment count
+    api.get<{ pagination: { total: number } }>('/orders?fulfillmentStatus=AwaitingShipment&limit=1', token)
+      .then(res => setAwaitingShipment(res.pagination.total))
+      .catch(() => {});
+    // Fetch alerts count
+    api.get<{ total: number }>('/dashboard/alerts', token)
+      .then(res => setActionCount(res.total))
+      .catch(() => {});
+  }, [token]);
+
+  const navItems = [
+    { label: 'Dashboard', path: '/', icon: '📊', badge: null },
+    { label: 'Inventory', path: '/inventory', icon: '💎', badge: null },
+    { label: 'Listings', path: '/listings', icon: '🏪', badge: null },
+    { label: 'Orders', path: '/orders', icon: '📦', badge: awaitingShipment > 0 ? awaitingShipment.toString() : null },
+    { label: 'Revenue', path: '/revenue', icon: '💰', badge: null },
+    { label: 'Expenses', path: '/expenses', icon: '📉', badge: null },
+    { label: 'Calculator', path: '/calculator', icon: '🧮', badge: null },
+    { label: 'Analytics', path: '/analytics', icon: '📈', badge: null },
+    { label: 'Action Center', path: '/actions', icon: '⚡', badge: actionCount > 0 ? actionCount.toString() : null },
+    { label: 'Storage', path: '/storage', icon: '🗄️', badge: null },
+    { label: 'Tags', path: '/tags', icon: '🏷️', badge: null },
+    { label: 'Integrations', path: '/integrations', icon: '🔗', badge: null },
+    { label: 'Reports', path: '/reports', icon: '📋', badge: null },
+    { label: 'Settings', path: '/settings', icon: '⚙️', badge: null },
+  ];
+
+  const bottomItems = [
+    { label: 'Scan QR', path: '/scan-qr', icon: '📷', badge: null },
+  ];
 
   return (
     <>
@@ -71,9 +89,9 @@ export default function Sidebar() {
               <span className="flex-1">{item.label}</span>
               {item.badge && (
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                  item.badge === '!'
+                  item.label === 'Action Center'
                     ? 'bg-red-500 text-white'
-                    : 'bg-gray-200 text-gray-600'
+                    : 'bg-orange-100 text-orange-700'
                 }`}>
                   {item.badge}
                 </span>

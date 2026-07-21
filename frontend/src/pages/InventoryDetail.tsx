@@ -114,6 +114,12 @@ export default function InventoryDetail() {
   const [uploadingDocs, setUploadingDocs] = useState(false);
   const [existingListings, setExistingListings] = useState<ExistingListing[]>([]);
   const [listingHints, setListingHints] = useState<string[]>([]);
+  const [showSaleModal, setShowSaleModal] = useState(false);
+  const [saleForm, setSaleForm] = useState({
+    salePrice: '', marketplace: 'Etsy', buyerName: '', saleDate: '', shippingCost: '', marketplaceFees: '', notes: '',
+  });
+  const [saleSubmitting, setSaleSubmitting] = useState(false);
+  const [saleSuccess, setSaleSuccess] = useState<{ orderId: string; orderNumber: string } | null>(null);
 
   const [form, setForm] = useState({
     sku: '', title: '', description: '', category: 'Other', type: 'Unknown',
@@ -334,6 +340,33 @@ export default function InventoryDetail() {
     }
   };
 
+  const handleRecordSale = async () => {
+    if (!id || id === 'new' || !saleForm.salePrice || !saleForm.saleDate) {
+      setError('Sale price and date are required');
+      return;
+    }
+    setSaleSubmitting(true);
+    setError('');
+    try {
+      const res = await api.post<{ order: { id: string; orderNumber: string } }>('/sales/record', {
+        inventoryItemId: id,
+        salePrice: parseFloat(saleForm.salePrice),
+        marketplace: saleForm.marketplace,
+        buyerName: saleForm.buyerName || undefined,
+        saleDate: saleForm.saleDate,
+        shippingCost: saleForm.shippingCost ? parseFloat(saleForm.shippingCost) : undefined,
+        marketplaceFees: saleForm.marketplaceFees ? parseFloat(saleForm.marketplaceFees) : undefined,
+        notes: saleForm.notes || undefined,
+      }, token || undefined);
+      setSaleSuccess({ orderId: res.order.id, orderNumber: res.order.orderNumber });
+      await fetchItem();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to record sale');
+    } finally {
+      setSaleSubmitting(false);
+    }
+  };
+
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
   if (!isNew && !item) return <div className="text-center py-12 text-gray-400">Item not found</div>;
 
@@ -348,7 +381,26 @@ export default function InventoryDetail() {
             {isNew ? 'New Inventory Item' : `Edit: ${item?.title}`}
           </h1>
         </div>
-        <button onClick={() => navigate('/inventory')} className="btn-secondary">Back to Inventory</button>
+        <div className="flex gap-2">
+          {!isNew && item && !['Sold', 'Shipped', 'Returned', 'Archived'].includes(item.status) && (
+            <button onClick={() => {
+              setSaleForm({
+                salePrice: item.askingPrice?.toString() || '',
+                marketplace: 'Etsy',
+                buyerName: '',
+                saleDate: new Date().toISOString().split('T')[0],
+                shippingCost: '',
+                marketplaceFees: '',
+                notes: '',
+              });
+              setSaleSuccess(null);
+              setShowSaleModal(true);
+            }} className="btn-primary text-sm">
+              Record Sale
+            </button>
+          )}
+          <button onClick={() => navigate('/inventory')} className="btn-secondary">Back to Inventory</button>
+        </div>
       </div>
 
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">{error}</div>}
@@ -712,6 +764,71 @@ export default function InventoryDetail() {
           <button type="button" onClick={() => navigate('/inventory')} className="btn-secondary">Cancel</button>
         </div>
       </form>
+
+      {/* Record Sale Modal */}
+      {showSaleModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowSaleModal(false)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-lg mb-4">Record Sale</h3>
+            {saleSuccess ? (
+              <div className="text-center py-4">
+                <p className="text-green-600 text-lg mb-2">✅ Sale Recorded!</p>
+                <p className="text-gray-700 mb-4">Order #{saleSuccess.orderNumber}</p>
+                <div className="flex gap-3">
+                  <Link to={`/orders?id=${saleSuccess.orderId}`} className="btn-primary flex-1">View Order</Link>
+                  <button onClick={() => setShowSaleModal(false)} className="btn-secondary flex-1">Close</button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Sale Price *</label>
+                    <input type="number" step="0.01" value={saleForm.salePrice} onChange={(e) => setSaleForm({ ...saleForm, salePrice: e.target.value })} className="input-field" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Marketplace</label>
+                    <select value={saleForm.marketplace} onChange={(e) => setSaleForm({ ...saleForm, marketplace: e.target.value })} className="input-field">
+                      <option value="Etsy">Etsy</option>
+                      <option value="Ebay">eBay</option>
+                      <option value="Direct">Direct</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Buyer Name</label>
+                  <input value={saleForm.buyerName} onChange={(e) => setSaleForm({ ...saleForm, buyerName: e.target.value })} className="input-field" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sale Date *</label>
+                  <input type="date" value={saleForm.saleDate} onChange={(e) => setSaleForm({ ...saleForm, saleDate: e.target.value })} className="input-field" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Shipping Cost</label>
+                    <input type="number" step="0.01" value={saleForm.shippingCost} onChange={(e) => setSaleForm({ ...saleForm, shippingCost: e.target.value })} className="input-field" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Marketplace Fees</label>
+                    <input type="number" step="0.01" value={saleForm.marketplaceFees} onChange={(e) => setSaleForm({ ...saleForm, marketplaceFees: e.target.value })} className="input-field" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                  <textarea value={saleForm.notes} onChange={(e) => setSaleForm({ ...saleForm, notes: e.target.value })} className="input-field" rows={2} />
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={handleRecordSale} disabled={saleSubmitting} className="btn-primary flex-1">
+                    {saleSubmitting ? 'Recording...' : 'Record Sale'}
+                  </button>
+                  <button onClick={() => setShowSaleModal(false)} className="btn-secondary flex-1">Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Lightbox */}
       {lightboxPhoto && (

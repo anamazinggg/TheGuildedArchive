@@ -9,6 +9,8 @@ interface DashboardData {
   totalAskingPriceValue: number;
   revenueThisMonth: number;
   estimatedProfitThisMonth: number;
+  ordersAwaitingShipment: number;
+  totalExpensesThisMonth: number;
   itemsAwaitingShipment: number;
   agingInventoryCount: number;
 }
@@ -83,9 +85,9 @@ export default function Dashboard() {
     { label: 'Total Active Items', value: data.totalActiveItems, color: 'bg-blue-50 border-blue-200', icon: '💎' },
     { label: 'Total Inventory Cost', value: formatCurrency(data.totalInventoryCost), color: 'bg-slate-50 border-slate-200', icon: '📋' },
     { label: 'Total Asking Price', value: formatCurrency(data.totalAskingPriceValue), color: 'bg-amber-50 border-amber-200', icon: '💵' },
-    { label: 'Revenue This Month', value: formatCurrency(data.revenueThisMonth), color: 'bg-green-50 border-green-200', icon: '💰' },
-    { label: 'Est. Profit This Month', value: formatCurrency(data.estimatedProfitThisMonth), color: 'bg-emerald-50 border-emerald-200', icon: '📈' },
-    { label: 'Awaiting Shipment', value: data.itemsAwaitingShipment, color: 'bg-orange-50 border-orange-200', icon: '📦' },
+    { label: 'Revenue This Month', value: formatCurrency(data.revenueThisMonth), color: 'bg-green-50 border-green-200', icon: '💰', link: '/revenue' },
+    { label: 'Est. Profit This Month', value: formatCurrency(data.estimatedProfitThisMonth), color: 'bg-emerald-50 border-emerald-200', icon: '📈', link: '/revenue' },
+    { label: 'Awaiting Shipment', value: data.itemsAwaitingShipment, color: 'bg-orange-50 border-orange-200', icon: '📦', link: '/orders' },
     { label: 'Aging (>90 days)', value: data.agingInventoryCount, color: 'bg-red-50 border-red-200', icon: '⏳' },
   ];
 
@@ -105,6 +107,11 @@ export default function Dashboard() {
             </div>
             <p className="text-sm text-gray-500">{card.label}</p>
             <p className="text-2xl font-bold mt-1 text-gray-900">{card.value}</p>
+            {card.link && (
+              <Link to={card.link} className="text-xs text-primary-600 hover:text-primary-700 mt-1 inline-block">
+                View details →
+              </Link>
+            )}
           </div>
         ))}
       </div>
@@ -133,7 +140,10 @@ export default function Dashboard() {
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Sales */}
         <div className="lg:col-span-2 card">
-          <h2 className="font-semibold text-gray-900 mb-4">Recent Sales</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900">Recent Sales</h2>
+            <Link to="/orders" className="text-sm text-primary-600 hover:text-primary-700">View All →</Link>
+          </div>
           {recentSales.length === 0 ? (
             <p className="text-gray-400 text-sm">No sales recorded yet.</p>
           ) : (
@@ -190,8 +200,27 @@ export default function Dashboard() {
               <Link to="/inventory" className="btn-secondary block text-center text-sm w-full">
                 View Inventory
               </Link>
+              <Link to="/orders" className="btn-secondary block text-center text-sm w-full">
+                {data.ordersAwaitingShipment > 0 ? `Orders (${data.ordersAwaitingShipment} to ship)` : 'Orders'}
+              </Link>
+              <Link to="/expenses" className="btn-secondary block text-center text-sm w-full">
+                + Add Expense
+              </Link>
               <Link to="/actions" className="btn-secondary block text-center text-sm w-full">
                 Action Center {alerts ? `(${alerts.total})` : ''}
+              </Link>
+            </div>
+          </div>
+
+          {/* Financial Quick Links */}
+          <div className="card">
+            <h2 className="font-semibold text-gray-900 mb-4">Financial</h2>
+            <div className="space-y-2">
+              <Link to="/revenue" className="btn-secondary block text-center text-sm w-full">
+                Revenue Dashboard
+              </Link>
+              <Link to="/calculator" className="btn-secondary block text-center text-sm w-full">
+                Profit Calculator
               </Link>
             </div>
           </div>
@@ -214,7 +243,7 @@ export default function Dashboard() {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-500">Awaiting Shipment</span>
-                <span className="font-medium">{data.itemsAwaitingShipment}</span>
+                <Link to="/orders" className="font-medium text-primary-600">{data.itemsAwaitingShipment}</Link>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Aging (90+ days)</span>
@@ -223,6 +252,10 @@ export default function Dashboard() {
               <div className="flex justify-between">
                 <span className="text-gray-500">Total Active</span>
                 <span className="font-medium">{data.totalActiveItems}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Expenses This Month</span>
+                <Link to="/expenses" className="font-medium text-primary-600">{formatCurrency(data.totalExpensesThisMonth)}</Link>
               </div>
             </div>
           </div>

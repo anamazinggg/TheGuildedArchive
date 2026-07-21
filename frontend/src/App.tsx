@@ -15,6 +15,10 @@ import Listings from './pages/Listings';
 import ListingDetail from './pages/ListingDetail';
 import ListingTemplates from './pages/ListingTemplates';
 import CreateListing from './pages/CreateListing';
+import Orders from './pages/Orders';
+import Revenue from './pages/Revenue';
+import Expenses from './pages/Expenses';
+import Calculator from './pages/Calculator';
 import PlaceholderPage from './pages/Placeholder';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -72,9 +76,11 @@ export default function App() {
         <Route path="/listings" element={<Listings />} />
         <Route path="/listings/templates" element={<ListingTemplates />} />
         <Route path="/listings/:id" element={<ListingDetail />} />
-        <Route path="/orders" element={<PlaceholderPage title="Orders" />} />
-        <Route path="/revenue" element={<PlaceholderPage title="Revenue" />} />
-        <Route path="/expenses" element={<PlaceholderPage title="Expenses" />} />
+        <Route path="/orders" element={<Orders />} />
+        <Route path="/orders/:id" element={<Orders />} />
+        <Route path="/revenue" element={<Revenue />} />
+        <Route path="/expenses" element={<Expenses />} />
+        <Route path="/calculator" element={<Calculator />} />
         <Route path="/analytics" element={<PlaceholderPage title="Analytics" />} />
         <Route path="/actions" element={<PlaceholderPage title="Action Center" />} />
         <Route path="/reports" element={<PlaceholderPage title="Reports" />} />
