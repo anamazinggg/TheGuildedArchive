@@ -1,0 +1,18 @@
+{
+  "name": "gilded-archive",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"bun run --cwd backend dev\" \"bun run --cwd frontend dev\"",
+    "dev:backend": "bun run --cwd backend dev",
+    "dev:frontend": "bun run --cwd frontend dev",
+    "build": "bun run --cwd frontend build",
+    "start": "NODE_ENV=production PORT=3000 bun run --cwd backend start",
+    "prisma:generate": "bun run --cwd backend prisma:generate",
+    "prisma:push": "bun run --cwd backend prisma:push",
+    "publish": "bash ./publish.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "workspaces": ["backend", "frontend"]
+}

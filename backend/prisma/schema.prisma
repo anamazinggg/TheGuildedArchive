@@ -1,0 +1,305 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("Owner")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  activityLogs ActivityLog[]
+}
+
+model InventoryItem {
+  id                    String   @id @default(uuid())
+  sku                   String   @unique
+  title                 String
+  description           String   @default("")
+  category              String   @default("Other")
+  type                  String   @default("Unknown")
+  estimatedEra          String?
+  brand                 String?
+  metalType             String?
+  metalPurity           String?
+  gemstoneType          String?
+  gemstoneColor         String?
+  ringSize              String?
+  dimensions            String?
+  weight                String?
+  condition             String   @default("Good")
+  conditionNotes        String?
+  restorationHistory    String?
+  authenticityNotes     String?
+  purchaseSource        String?
+  purchaseDate          DateTime?
+  purchaseCost          Float?
+  restorationCost       Float?   @default(0)
+  cleaningCost          Float?   @default(0)
+  appraisalCost         Float?   @default(0)
+  packagingCost         Float?   @default(0)
+  shippingCost          Float?   @default(0)
+  totalCostBasis        Float?
+  askingPrice           Float?
+  minAcceptablePrice    Float?
+  currentMarketplacePrice Float?
+  storageLocationId     String?
+  status                String   @default("Draft")
+  dateListed            DateTime?
+  daysInInventory       Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  deletedAt             DateTime?
+
+  storageLocation  StorageLocation?  @relation(fields: [storageLocationId], references: [id])
+  photos           InventoryPhoto[]
+  documents        InventoryDocument[]
+  tags             InventoryTag[]
+  marketplaceListings MarketplaceListing[]
+  orderItems       OrderItem[]
+  transactions     Transaction[]
+  expenses         Expense[]
+  analyticsSnapshots AnalyticsSnapshot[]
+}
+
+model InventoryPhoto {
+  id              String @id @default(uuid())
+  inventoryItemId String
+  filename        String
+  originalName    String
+  mimeType        String
+  isPrimary       Boolean @default(false)
+  sortOrder       Int     @default(0)
+  createdAt       DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+}
+
+model InventoryDocument {
+  id              String @id @default(uuid())
+  inventoryItemId String
+  filename        String
+  originalName    String
+  documentType    String?
+  createdAt       DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+}
+
+model Tag {
+  id    String @id @default(uuid())
+  name  String @unique
+  color String?
+
+  inventoryItems InventoryTag[]
+}
+
+model InventoryTag {
+  inventoryItemId String
+  tagId          String
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  tag           Tag           @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([inventoryItemId, tagId])
+}
+
+model StorageLocation {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  room      String?
+  cabinet   String?
+  shelf     String?
+  drawer    String?
+  tray      String?
+  box       String?
+  slot      String?
+  qrCode    String?
+  parentId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent   StorageLocation?  @relation("StorageHierarchy", fields: [parentId], references: [id])
+  children StorageLocation[] @relation("StorageHierarchy")
+  items    InventoryItem[]
+}
+
+model MarketplaceAccount {
+  id                   String   @id @default(uuid())
+  marketplace          String
+  accountName          String
+  isConnected          Boolean  @default(false)
+  encryptedAccessToken   String?
+  encryptedRefreshToken  String?
+  tokenExpiresAt       DateTime?
+  storeName            String?
+  storeId              String?
+  lastSyncAt           DateTime?
+  syncStatus           String   @default("Idle")
+  syncErrorMessage     String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model MarketplaceListing {
+  id                   String   @id @default(uuid())
+  inventoryItemId      String
+  marketplace          String
+  marketplaceListingId String
+  marketplaceListingUrl String?
+  title                String
+  description          String?
+  price                Float
+  quantity             Int      @default(1)
+  status               String   @default("Draft")
+  marketplaceCategory  String?
+  shippingProfile      String?
+  returnPolicy         String?
+  tags                 String?
+  photoOrder           String?
+  etsySpecificFields   String?
+  ebaySpecificFields   String?
+  lastSyncAt           DateTime?
+  syncStatus           String   @default("Pending")
+  syncMessage          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+}
+
+model ListingTemplate {
+  id                   String @id @default(uuid())
+  name                 String
+  category             String
+  titleTemplate        String?
+  descriptionTemplate  String?
+  tagsTemplate         String?
+  shippingProfile      String?
+  returnPolicy         String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model Order {
+  id                 String   @id @default(uuid())
+  orderNumber        String
+  marketplace        String
+  marketplaceOrderId String   @unique
+  buyerName          String?
+  buyerUsername      String?
+  buyerEmail         String?
+  saleDate           DateTime
+  paymentStatus      String   @default("Pending")
+  fulfillmentStatus  String   @default("AwaitingPayment")
+  shippingDeadline   DateTime?
+  shippingCarrier    String?
+  trackingNumber     String?
+  shippingCost       Float?   @default(0)
+  insuranceCost      Float?   @default(0)
+  salesTaxCollected  Float?   @default(0)
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  orderItems    OrderItem[]
+  transactions  Transaction[]
+}
+
+model OrderItem {
+  id              String @id @default(uuid())
+  orderId         String
+  inventoryItemId String
+  salePrice       Float
+  quantity        Int    @default(1)
+  createdAt       DateTime @default(now())
+
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+}
+
+model Transaction {
+  id              String   @id @default(uuid())
+  type            String
+  category        String?
+  orderId         String?
+  inventoryItemId String?
+  amount          Float
+  description     String?
+  transactionDate DateTime
+  marketplace     String   @default("Manual")
+  vendor          String?
+  paymentMethod   String?
+  receiptFilename String?
+  createdAt       DateTime @default(now())
+
+  order          Order?          @relation(fields: [orderId], references: [id])
+  inventoryItem  InventoryItem?  @relation(fields: [inventoryItemId], references: [id])
+}
+
+model Expense {
+  id               String   @id @default(uuid())
+  category         String
+  vendor           String?
+  amount           Float
+  expenseDate      DateTime
+  paymentMethod    String?
+  receiptFilename  String?
+  inventoryItemId  String?
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+}
+
+model SyncEvent {
+  id              String   @id @default(uuid())
+  marketplace     String
+  eventType       String
+  status          String
+  message         String?
+  relatedItemId   String?
+  relatedListingId String?
+  retryCount      Int      @default(0)
+  lastAttemptAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  details    String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+model AnalyticsSnapshot {
+  id                  String   @id @default(uuid())
+  inventoryItemId     String
+  marketplaceListingId String?
+  views               Int?     @default(0)
+  favorites           Int?     @default(0)
+  watchers            Int?     @default(0)
+  clicks              Int?     @default(0)
+  conversions         Int?     @default(0)
+  score               Float?
+  snapshotDate        DateTime
+  createdAt           DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+}
