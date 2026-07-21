@@ -1,39 +1,29 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-echo "=== The Gilded Archive — Publish ==="
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT_DIR"
 
-# Step 1: Build the frontend
-echo "→ Building frontend..."
-cd "$(dirname "$0")/frontend"
-bun run build
-cd ..
+echo "=== The Guilded Archive — Build & Publish ==="
+echo "→ Installing dependencies..."
+npm install
 
-# Step 2: Generate Prisma client
-echo "→ Generating Prisma client..."
-cd backend
-bun run prisma:generate
-bun run prisma:push
-cd ..
+echo "→ Generating the Prisma client and updating the prototype database..."
+npm run prisma:generate
+npm run prisma:push
 
-# Step 3: Kill any existing server on port 3000
-echo "→ Taking over port 3000..."
-sudo sh -c 'lsof -t -iTCP:3000 -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null' || true
-sleep 1
+echo "→ Building backend and frontend..."
+npm run build
 
-# Step 4: Start the production server on port 3000
-echo "→ Starting server on port 3000..."
-NODE_ENV=production PORT=3000 nohup bun run --cwd backend start > /home/team/shared/site/.run/server.log 2>&1 &
+echo "→ Starting the production server on port ${PORT:-3000}..."
+mkdir -p .run
+NODE_ENV=production PORT="${PORT:-3000}" nohup npm run start > .run/server.log 2>&1 &
 SERVER_PID=$!
 
-# Wait for the server to start
 sleep 2
-if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
-  echo "✓ Server is running on port 3000 (PID: $SERVER_PID)"
-  echo "  API: http://localhost:3000/api/health"
-  echo "  App: http://localhost:3000"
+if curl -fsS "http://localhost:${PORT:-3000}/api/health" >/dev/null; then
+  echo "✓ Server is running (PID: $SERVER_PID)"
 else
-  echo "⚠ Server may not have started. Check .run/server.log"
+  echo "Server did not pass its health check. Review .run/server.log."
+  exit 1
 fi
-
-echo "=== Done ==="

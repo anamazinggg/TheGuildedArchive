@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig } from '../config/product';
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, token } = useAuth();
+  const { user, organization, token } = useAuth();
   const [awaitingShipment, setAwaitingShipment] = useState(0);
   const [actionCount, setActionCount] = useState(0);
   const [darkMode, setDarkMode] = useState(() => {
@@ -108,8 +109,8 @@ export default function Sidebar() {
         ${collapsed ? '-translate-x-full lg:translate-x-0' : 'translate-x-0'}
       `}>
         <div className="p-5 border-b border-gray-200 dark:border-gray-700">
-          <h1 className="font-serif font-bold text-xl text-primary-800 dark:text-primary-300">The Gilded Archive</h1>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Inventory Management</p>
+          <h1 className="font-serif font-bold text-xl text-primary-800 dark:text-primary-300">{productConfig.productName}</h1>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">{organization?.name || productConfig.niche}</p>
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {navItems.map((item) => (

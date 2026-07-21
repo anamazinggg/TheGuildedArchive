@@ -33,14 +33,14 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const existing = await prisma.tag.findUnique({ where: { name } });
+    const existing = await prisma.tag.findFirst({ where: { name } });
     if (existing) {
       res.status(409).json({ error: 'A tag with this name already exists' });
       return;
     }
 
     const tag = await prisma.tag.create({
-      data: { name, color: color || null },
+      data: { organizationId: req.user!.organizationId, name, color: color || null },
     });
 
     res.status(201).json({ tag });

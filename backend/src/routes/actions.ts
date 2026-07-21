@@ -1,29 +1,12 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
+import { requireTenantContext } from '../lib/tenant-context.js';
 
 const router = Router();
 router.use(authMiddleware);
 // Actions: GET for all, PUT (dismiss) requires ListingAssistant+
 router.use(requireWriteForRole('ListingAssistant'));
-
-// In-memory store for snoozed/dismissed alerts
-// Key: "itemId:category", Value: { snoozedUntil?: Date, dismissed: boolean }
-const alertState = new Map<string, { snoozedUntil?: Date; dismissed: boolean }>();
-
-function alertKey(itemId: string, category: string): string {
-  return `${itemId}:${category}`;
-}
-
-// Clean expired snoozes
-function cleanSnoozes() {
-  const now = new Date();
-  for (const [key, state] of alertState) {
-    if (state.snoozedUntil && state.snoozedUntil < now) {
-      alertState.delete(key);
-    }
-  }
-}
 
 interface Alert {
   id: string;
@@ -36,8 +19,18 @@ interface Alert {
 }
 
 async function gatherAlerts(): Promise<Alert[]> {
-  cleanSnoozes();
   const now = new Date();
+  const savedStates = await prisma.actionAlertState.findMany({
+    where: {
+      OR: [
+        { dismissed: true },
+        { snoozedUntil: { gt: now } },
+      ],
+    },
+  });
+  const alertStates = new Map<string, { dismissed: boolean; snoozedUntil: Date | null }>(
+    savedStates.map((state: any) => [state.alertId, state])
+  );
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
@@ -45,7 +38,7 @@ async function gatherAlerts(): Promise<Alert[]> {
 
   // Helper: check if alert is snoozed/dismissed
   const isFiltered = (itemId: string, cat: string) => {
-    const state = alertState.get(alertKey(itemId, cat));
+    const state = alertStates.get(`${cat}-${itemId}`);
     if (!state) return false;
     if (state.dismissed) return true;
     if (state.snoozedUntil && state.snoozedUntil > now) return true;
@@ -360,16 +353,15 @@ router.get('/count', async (req: AuthRequest, res: Response) => {
 });
 
 // PUT /api/actions/:alertId/dismiss
-router.put('/:alertId/dismiss', (req: AuthRequest, res: Response) => {
+router.put('/:alertId/dismiss', async (req: AuthRequest, res: Response) => {
   try {
-    const { alertId } = req.params;
-    // Extract itemId and category from alertId (format: category-itemId)
-    // We store by itemId:category key
-    // The alert ID is like "not-listed-uuid" — we need to parse it
-    const parts = alertId.split('-');
-    // The category is the prefix, itemId is the rest (UUID has dashes)
-    // Finding the split point is tricky. Let's store by alertId directly.
-    alertState.set(alertId, { dismissed: true });
+    const alertId = String(req.params.alertId);
+    const organizationId = requireTenantContext().organizationId;
+    await prisma.actionAlertState.upsert({
+      where: { organizationId_alertId: { organizationId, alertId } },
+      create: { organizationId, alertId, dismissed: true },
+      update: { dismissed: true, snoozedUntil: null },
+    });
     res.json({ success: true });
   } catch (error) {
     console.error('Dismiss error:', error);
@@ -378,11 +370,16 @@ router.put('/:alertId/dismiss', (req: AuthRequest, res: Response) => {
 });
 
 // PUT /api/actions/:alertId/snooze
-router.put('/:alertId/snooze', (req: AuthRequest, res: Response) => {
+router.put('/:alertId/snooze', async (req: AuthRequest, res: Response) => {
   try {
-    const { alertId } = req.params;
+    const alertId = String(req.params.alertId);
     const snoozedUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
-    alertState.set(alertId, { snoozedUntil, dismissed: false });
+    const organizationId = requireTenantContext().organizationId;
+    await prisma.actionAlertState.upsert({
+      where: { organizationId_alertId: { organizationId, alertId } },
+      create: { organizationId, alertId, dismissed: false, snoozedUntil },
+      update: { dismissed: false, snoozedUntil },
+    });
     res.json({ success: true, snoozedUntil });
   } catch (error) {
     console.error('Snooze error:', error);

@@ -1,6 +1,7 @@
 // Listing template routes
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
+import { productConfig } from '../config/product.js';
 import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -47,7 +48,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const validCategories = ['Ring', 'Necklace', 'Bracelet', 'Earrings', 'Brooch', 'Watch', 'Other'];
+    const validCategories = [...productConfig.categories];
     if (!validCategories.includes(category)) {
       res.status(400).json({
         error: `Invalid category. Must be one of: ${validCategories.join(', ')}`,
@@ -57,6 +58,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
     const template = await prisma.listingTemplate.create({
       data: {
+        organizationId: req.user!.organizationId,
         name,
         category,
         titleTemplate: titleTemplate || null,

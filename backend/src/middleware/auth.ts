@@ -1,11 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, JwtPayload } from '../lib/auth.js';
+import prisma from '../lib/prisma.js';
+import { runWithTenant } from '../lib/tenant-context.js';
 
 export interface AuthRequest extends Request {
   user?: JwtPayload;
 }
 
-export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
+export async function authMiddleware(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'No token provided' });
@@ -15,21 +17,42 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   const token = authHeader.split(' ')[1];
   try {
     const decoded = verifyToken(token);
-    req.user = decoded;
-    next();
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { id: decoded.membershipId },
+      include: { user: true },
+    });
+
+    if (
+      !membership ||
+      membership.status !== 'Active' ||
+      membership.userId !== decoded.userId ||
+      membership.organizationId !== decoded.organizationId
+    ) {
+      res.status(401).json({ error: 'Organization access is no longer active' });
+      return;
+    }
+
+    req.user = {
+      ...decoded,
+      email: membership.user.email,
+      role: membership.role,
+    };
+
+    runWithTenant(
+      {
+        organizationId: membership.organizationId,
+        membershipId: membership.id,
+        userId: membership.userId,
+        role: membership.role,
+      },
+      next
+    );
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
-// Role hierarchy: Owner > Manager > ListingAssistant / FulfillmentAssistant > ReadOnly
-const roleLevels: Record<string, number> = {
-  Owner: 4,
-  Manager: 3,
-  ListingAssistant: 2,
-  FulfillmentAssistant: 2,
-  ReadOnly: 1,
-};
+const elevatedRoles = new Set(['Owner', 'Manager']);
 
 export function requireRole(...roles: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
@@ -38,16 +61,7 @@ export function requireRole(...roles: string[]) {
       return;
     }
 
-    const userRole = req.user.role;
-    const userLevel = roleLevels[userRole] || 0;
-
-    // Check if user has any of the required roles or a higher role level
-    const hasPermission = roles.some((role) => {
-      const requiredLevel = roleLevels[role] || 0;
-      return userLevel >= requiredLevel;
-    });
-
-    if (!hasPermission) {
+    if (!roles.includes(req.user.role)) {
       res.status(403).json({ error: 'Insufficient permissions' });
       return;
     }
@@ -56,7 +70,6 @@ export function requireRole(...roles: string[]) {
   };
 }
 
-// Middleware that allows read-only access for GET requests regardless of role
 export function requireWriteForRole(...roles: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
@@ -64,19 +77,17 @@ export function requireWriteForRole(...roles: string[]) {
       return;
     }
 
-    // ReadOnly can only do GET
-    if (req.user.role === 'ReadOnly' && req.method !== 'GET') {
-      res.status(403).json({ error: 'Read-only access — write operations require higher role' });
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      next();
       return;
     }
 
-    const userLevel = roleLevels[req.user.role] || 0;
-    const hasPermission = roles.some((role) => {
-      const requiredLevel = roleLevels[role] || 0;
-      return userLevel >= requiredLevel;
-    });
+    if (req.user.role === 'ReadOnly') {
+      res.status(403).json({ error: 'Read-only access — write operations require a staff role' });
+      return;
+    }
 
-    if (!hasPermission) {
+    if (!roles.includes(req.user.role) && !elevatedRoles.has(req.user.role)) {
       res.status(403).json({ error: 'Insufficient permissions' });
       return;
     }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig } from '../config/product';
 
 interface InventoryPhoto {
   id: string;
@@ -65,7 +66,7 @@ interface MarketplaceListing {
   id: string;
   inventoryItemId: string;
   marketplace: string;
-  marketplaceListingId: string;
+  marketplaceListingId: string | null;
   marketplaceListingUrl: string | null;
   title: string;
   description: string | null;
@@ -84,6 +85,12 @@ interface MarketplaceListing {
   syncMessage: string | null;
   createdAt: string;
   inventoryItem: InventoryItemFull;
+  marketplaceAccount: {
+    id: string;
+    storeId: string | null;
+    storeName: string | null;
+    isConnected: boolean;
+  } | null;
 }
 
 interface CompletenessData {
@@ -102,7 +109,7 @@ interface ListingTemplate {
   returnPolicy: string | null;
 }
 
-const categories = ['Ring', 'Necklace', 'Bracelet', 'Earrings', 'Brooch', 'Watch', 'Other'];
+const categories = [...productConfig.categories];
 const ETSY_TITLE_MAX = 140;
 
 function getCompletenessColor(score: number) {
@@ -322,13 +329,32 @@ export default function ListingDetail() {
     setError('');
     try {
       if (publishTarget === 'Both') {
-        // Publish current marketplace, then duplicate to other
-        await api.post(`/listings/${id}/publish`, {}, token || undefined);
-        try {
-          await api.post(`/listings/${id}/duplicate`, {}, token || undefined);
-        } catch {
-          // May already exist on the other marketplace
+        // Publish the current listing and then publish its linked counterpart.
+        if (listing?.status !== 'Active') {
+          await api.post(`/listings/${id}/publish`, {}, token || undefined);
         }
+        const otherMarketplace = listing?.marketplace === 'Etsy' ? 'Ebay' : 'Etsy';
+        let counterpartId: string | null = null;
+
+        try {
+          const duplicate = await api.post<{ listing: MarketplaceListing }>(
+            `/listings/${id}/duplicate`,
+            {},
+            token || undefined
+          );
+          counterpartId = duplicate.listing.id;
+        } catch {
+          const existing = await api.get<{ listings: MarketplaceListing[] }>(
+            `/listings?inventoryItemId=${listing?.inventoryItemId}&marketplace=${otherMarketplace}`,
+            token || undefined
+          );
+          counterpartId = existing.listings.find((candidate) => candidate.status === 'Draft')?.id || null;
+        }
+
+        if (!counterpartId) {
+          throw new Error(`Could not prepare the ${otherMarketplace} listing`);
+        }
+        await api.post(`/listings/${counterpartId}/publish`, {}, token || undefined);
       } else if (publishTarget === 'Etsy' || publishTarget === 'Ebay') {
         if (listing?.marketplace === publishTarget) {
           await api.post(`/listings/${id}/publish`, {}, token || undefined);
@@ -362,6 +388,22 @@ export default function ListingDetail() {
       await fetchListing();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to end listing');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSimulateSale = async () => {
+    if (!id || !confirm('Simulate a paid sale on this prototype marketplace? The linked listing on the other marketplace will be ended automatically.')) return;
+    setSaving(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      await api.post(`/listings/${id}/simulate-sale`, {}, token || undefined);
+      setSuccessMsg('Prototype sale recorded. Linked marketplace listings were closed.');
+      await fetchListing();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to simulate sale');
     } finally {
       setSaving(false);
     }
@@ -526,12 +568,19 @@ export default function ListingDetail() {
                   Publish to Both
                 </button>
                 {listing.status === 'Active' && (
-                  <button onClick={handleEnd} className="btn-secondary text-sm">
-                    End Listing
-                  </button>
+                  <>
+                    {listing.marketplaceAccount?.storeId?.startsWith('mock-') && (
+                      <button onClick={handleSimulateSale} disabled={saving} className="btn-secondary text-sm">
+                        Simulate Sale
+                      </button>
+                    )}
+                    <button onClick={handleEnd} className="btn-secondary text-sm">
+                      End Listing
+                    </button>
+                  </>
                 )}
                 <button onClick={handleSave} disabled={saving} className="btn-secondary text-sm">
-                  {saving ? 'Saving...' : 'Save as Draft'}
+                  {saving ? 'Saving...' : listing.status === 'Active' ? 'Save Changes' : 'Save as Draft'}
                 </button>
               </>
             )}

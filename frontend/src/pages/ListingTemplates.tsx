@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig } from '../config/product';
 
 interface ListingTemplate {
   id: string;
@@ -16,7 +17,7 @@ interface ListingTemplate {
   updatedAt: string;
 }
 
-const categories = ['Ring', 'Necklace', 'Bracelet', 'Earrings', 'Brooch', 'Watch', 'Other'];
+const categories = [...productConfig.categories];
 
 const defaultForm = {
   name: '',

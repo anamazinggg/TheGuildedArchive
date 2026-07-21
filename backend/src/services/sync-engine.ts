@@ -1,17 +1,19 @@
-// Sync engine — manages the full marketplace synchronization process
-import prisma from '../lib/prisma.js';
+// Tenant-aware marketplace synchronization and cross-marketplace sale protection.
+import prisma, { systemPrisma } from '../lib/prisma.js';
+import { requireTenantContext, runWithTenant } from '../lib/tenant-context.js';
 import { getMarketplaceService } from './marketplace-factory.js';
 import {
-  MarketplaceService,
   MarketplaceListingData,
   SyncResult,
   SaleResult,
 } from './marketplace.js';
 
-export async function runSync(
-  marketplace: string,
-  accountId: string
-): Promise<SyncResult> {
+function serviceKey(marketplace: string): 'etsy' | 'ebay' {
+  return marketplace.toLowerCase() === 'etsy' ? 'etsy' : 'ebay';
+}
+
+export async function runSync(marketplace: string, accountId: string): Promise<SyncResult> {
+  const tenant = requireTenantContext();
   const startedAt = new Date();
   const result: SyncResult = {
     marketplace,
@@ -28,52 +30,54 @@ export async function runSync(
   };
 
   try {
-    const service = getMarketplaceService(marketplace as 'etsy' | 'ebay');
+    const account = await prisma.marketplaceAccount.findUnique({ where: { id: accountId } });
+    if (!account || !account.isConnected) {
+      throw new Error('Marketplace account is not connected to this storefront');
+    }
+    if (account.marketplace.toLowerCase() !== marketplace.toLowerCase()) {
+      throw new Error('Marketplace account does not match the requested sync');
+    }
 
-    // Update account sync status
+    const service = getMarketplaceService(serviceKey(marketplace));
     await prisma.marketplaceAccount.update({
       where: { id: accountId },
       data: { syncStatus: 'Syncing', syncErrorMessage: null },
     });
 
-    // Step 1: Fetch active listings from marketplace
     let activeListings: MarketplaceListingData[];
     try {
       activeListings = await service.getListings(accountId);
       await logSyncEvent(marketplace, 'Import', 'Success', `Fetched ${activeListings.length} active listings`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      await logSyncEvent(marketplace, 'Import', 'Failed', msg);
-      throw err;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      await logSyncEvent(marketplace, 'Import', 'Failed', message);
+      throw error;
     }
 
     result.listingsProcessed = activeListings.length;
-
-    // Step 2: Process each listing — match and create/update
     const activeIds = new Set<string>();
 
-    for (const mlData of activeListings) {
-      activeIds.add(mlData.listingId);
-
+    for (const marketplaceData of activeListings) {
+      activeIds.add(marketplaceData.listingId);
       try {
         const existing = await prisma.marketplaceListing.findFirst({
           where: {
-            marketplaceListingId: mlData.listingId,
-            marketplace: marketplace,
+            marketplaceAccountId: accountId,
+            marketplaceListingId: marketplaceData.listingId,
           },
         });
 
         if (existing) {
-          // Update existing listing
           await prisma.marketplaceListing.update({
             where: { id: existing.id },
             data: {
-              title: mlData.title,
-              description: mlData.description,
-              price: mlData.price,
-              status: mapStatus(mlData.status),
-              marketplaceListingUrl: mlData.url,
-              marketplaceCategory: mlData.category || existing.marketplaceCategory,
+              title: marketplaceData.title,
+              description: marketplaceData.description,
+              price: marketplaceData.price,
+              quantity: marketplaceData.quantity || existing.quantity,
+              status: mapStatus(marketplaceData.status),
+              marketplaceListingUrl: marketplaceData.url,
+              marketplaceCategory: marketplaceData.category || existing.marketplaceCategory,
               syncStatus: 'Synced',
               lastSyncAt: new Date(),
               syncMessage: null,
@@ -81,184 +85,173 @@ export async function runSync(
           });
           result.listingsUpdated++;
         } else {
-          // Create new unmatched listing
           const unmatchedId = await getOrCreateUnmatchedItem();
           await prisma.marketplaceListing.create({
             data: {
+              organizationId: tenant.organizationId,
               inventoryItemId: unmatchedId,
-              marketplace: marketplace,
-              marketplaceListingId: mlData.listingId,
-              marketplaceListingUrl: mlData.url,
-              title: mlData.title,
-              description: mlData.description,
-              price: mlData.price,
-              quantity: mlData.quantity || 1,
+              marketplaceAccountId: accountId,
+              marketplace: account.marketplace,
+              marketplaceListingId: marketplaceData.listingId,
+              marketplaceListingUrl: marketplaceData.url,
+              title: marketplaceData.title,
+              description: marketplaceData.description,
+              price: marketplaceData.price,
+              quantity: marketplaceData.quantity || 1,
               status: 'Active',
-              marketplaceCategory: mlData.category,
+              marketplaceCategory: marketplaceData.category,
               syncStatus: 'Synced',
               lastSyncAt: new Date(),
-              syncMessage: 'Created from sync — needs manual inventory matching',
+              syncMessage: 'Imported from marketplace — match this listing to an inventory item',
             },
           });
           result.listingsCreated++;
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        result.errors.push(`Listing ${mlData.listingId}: ${msg}`);
-        await logSyncEvent(marketplace, 'Import', 'Failed', msg, undefined, mlData.listingId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        result.errors.push(`Listing ${marketplaceData.listingId}: ${message}`);
+        await logSyncEvent(marketplace, 'Import', 'Failed', message, undefined, marketplaceData.listingId);
       }
     }
 
-    // Step 3: Detect removed listings (were active before, now not in response)
     const previouslyActive = await prisma.marketplaceListing.findMany({
       where: {
-        marketplace: marketplace,
+        marketplaceAccountId: accountId,
         status: 'Active',
         marketplaceListingId: { notIn: Array.from(activeIds) },
       },
     });
 
     for (const listing of previouslyActive) {
-      // Check if it was sold (we'll handle in detectSales step)
-      // For now, just mark as potentially ended
       await prisma.marketplaceListing.update({
         where: { id: listing.id },
         data: {
           status: 'Ended',
           syncStatus: 'Synced',
           lastSyncAt: new Date(),
-          syncMessage: 'Listing no longer returned by marketplace API (may be sold or ended)',
+          syncMessage: 'No longer active on the marketplace; reconciliation marked it ended',
         },
       });
       result.listingsEnded++;
     }
 
-    // Step 4: Detect sales
-    try {
-      const sales = await detectSales(marketplace, accountId);
-      result.salesDetected = sales.length;
+    const sales = await detectSales(account.marketplace, accountId);
+    result.salesDetected = sales.length;
 
-      // For each sale, check cross-marketplace protection
-      for (const sale of sales) {
-        try {
-          // Find the inventory item linked to this listing
-          const listing = await prisma.marketplaceListing.findFirst({
-            where: { marketplaceListingId: sale.listingId },
-          });
-
-          if (listing && !(await isUnmatchedItem(listing.inventoryItemId))) {
-            await crossMarketplaceProtection(listing.inventoryItemId, marketplace);
-            result.crossMarketplaceActions++;
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : 'Unknown error';
-          result.errors.push(`Cross-marketplace: ${msg}`);
-        }
+    for (const sale of sales) {
+      const listing = await prisma.marketplaceListing.findFirst({
+        where: {
+          marketplaceAccountId: accountId,
+          marketplaceListingId: sale.listingId,
+        },
+      });
+      if (listing && !(await isUnmatchedItem(listing.inventoryItemId))) {
+        const actions = await crossMarketplaceProtection(listing.inventoryItemId, account.marketplace);
+        result.crossMarketplaceActions += actions;
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      result.errors.push(`Sales detection: ${msg}`);
-      await logSyncEvent(marketplace, 'SaleDetection', 'Failed', msg);
     }
 
-    // Step 5: Update account
     await prisma.marketplaceAccount.update({
       where: { id: accountId },
       data: {
         lastSyncAt: new Date(),
-        syncStatus: result.errors.length > 0 ? 'Error' : 'Idle',
-        syncErrorMessage: result.errors.length > 0 ? result.errors.join('; ') : null,
+        syncStatus: result.errors.length ? 'Error' : 'Idle',
+        syncErrorMessage: result.errors.length ? result.errors.join('; ') : null,
       },
     });
 
     await logSyncEvent(
       marketplace,
       'Sync',
-      'Success',
+      result.errors.length ? 'Partial' : 'Success',
       `Sync complete: ${result.listingsCreated} created, ${result.listingsUpdated} updated, ${result.listingsEnded} ended, ${result.salesDetected} sales`
     );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    result.errors.push(`Sync failed: ${msg}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    result.errors.push(`Sync failed: ${message}`);
 
-    // Update account error status
     await prisma.marketplaceAccount.update({
       where: { id: accountId },
-      data: {
-        syncStatus: 'Error',
-        syncErrorMessage: msg,
-        lastSyncAt: new Date(),
-      },
-    });
-
-    await logSyncEvent(marketplace, 'Sync', 'Failed', msg);
+      data: { syncStatus: 'Error', syncErrorMessage: message, lastSyncAt: new Date() },
+    }).catch(() => undefined);
+    await logSyncEvent(marketplace, 'Sync', 'Failed', message).catch(() => undefined);
   }
 
   result.completedAt = new Date();
   return result;
 }
 
-export async function detectSales(
-  marketplace: string,
-  accountId: string
-): Promise<SaleResult[]> {
-  const service = getMarketplaceService(marketplace as 'etsy' | 'ebay');
+export async function detectSales(marketplace: string, accountId: string): Promise<SaleResult[]> {
+  const tenant = requireTenantContext();
+  const service = getMarketplaceService(serviceKey(marketplace));
   const sales: SaleResult[] = [];
-
-  // Look back 7 days for recent orders
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const orders = await service.getOrders(accountId, since);
 
   for (const order of orders) {
-    for (const item of order.items) {
-      try {
-        // Find the listing in our DB
-        const listing = await prisma.marketplaceListing.findFirst({
-          where: { marketplaceListingId: item.listingId },
-        });
-
-        // Create or update Order
-        const existingOrder = await prisma.order.findUnique({
-          where: { marketplaceOrderId: order.orderId },
-        });
-
-        if (!existingOrder) {
-          await prisma.order.create({
-            data: {
-              orderNumber: order.orderNumber,
-              marketplace: marketplace,
-              marketplaceOrderId: order.orderId,
-              buyerName: order.buyerName,
-              buyerUsername: order.buyerUsername,
-              buyerEmail: order.buyerEmail,
-              saleDate: order.saleDate,
-              paymentStatus: order.paymentStatus,
-              fulfillmentStatus: order.fulfillmentStatus,
-              shippingDeadline: order.shippingDeadline,
-              shippingCarrier: order.shippingCarrier,
-              trackingNumber: order.trackingNumber,
-              shippingCost: order.shippingCost,
-              insuranceCost: order.insuranceCost,
-              salesTaxCollected: order.salesTaxCollected,
-              notes: order.notes,
-              orderItems: {
-                create: {
-                  inventoryItemId: listing?.inventoryItemId && !(await isUnmatchedItem(listing.inventoryItemId))
-                  ? listing.inventoryItemId
-                  : await getOrCreateUnmatchedItem(),
-                  salePrice: item.salePrice,
-                  quantity: item.quantity,
-                },
-              },
+    try {
+      const resolvedItems = await Promise.all(
+        order.items.map(async (item) => {
+          const listing = await prisma.marketplaceListing.findFirst({
+            where: {
+              marketplaceAccountId: accountId,
+              marketplaceListingId: item.listingId,
             },
           });
-        }
+          const inventoryItemId = listing?.inventoryItemId && !(await isUnmatchedItem(listing.inventoryItemId))
+            ? listing.inventoryItemId
+            : await getOrCreateUnmatchedItem();
+          return { item, listing, inventoryItemId };
+        })
+      );
 
-        // Update listing & inventory status
+      const existingOrder = await prisma.order.findFirst({
+        where: {
+          marketplaceAccountId: accountId,
+          marketplaceOrderId: order.orderId,
+        },
+      });
+
+      if (existingOrder) {
+        continue;
+      }
+
+      await prisma.order.create({
+          data: {
+            organizationId: tenant.organizationId,
+            marketplaceAccountId: accountId,
+            orderNumber: order.orderNumber,
+            marketplace,
+            marketplaceOrderId: order.orderId,
+            buyerName: order.buyerName,
+            buyerUsername: order.buyerUsername,
+            buyerEmail: order.buyerEmail,
+            saleDate: order.saleDate,
+            paymentStatus: order.paymentStatus,
+            fulfillmentStatus: order.fulfillmentStatus,
+            shippingDeadline: order.shippingDeadline,
+            shippingCarrier: order.shippingCarrier,
+            trackingNumber: order.trackingNumber,
+            shippingCost: order.shippingCost,
+            insuranceCost: order.insuranceCost,
+            salesTaxCollected: order.salesTaxCollected,
+            notes: order.notes,
+            orderItems: {
+              create: resolvedItems.map(({ item, inventoryItemId }) => ({
+                organizationId: tenant.organizationId,
+                inventoryItemId,
+                salePrice: item.salePrice,
+                quantity: item.quantity,
+              })),
+            },
+          },
+        });
+
+      for (const { item, listing } of resolvedItems) {
         if (listing) {
           await prisma.marketplaceListing.update({
             where: { id: listing.id },
-            data: { status: 'Sold', syncStatus: 'Synced' },
+            data: { status: 'Sold', syncStatus: 'Synced', lastSyncAt: new Date() },
           });
 
           if (!(await isUnmatchedItem(listing.inventoryItemId))) {
@@ -286,10 +279,10 @@ export async function detectSales(
           listing?.inventoryItemId,
           item.listingId
         );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        await logSyncEvent(marketplace, 'SaleDetection', 'Failed', msg, undefined, item.listingId);
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      await logSyncEvent(marketplace, 'SaleDetection', 'Failed', message);
     }
   }
 
@@ -299,81 +292,95 @@ export async function detectSales(
 export async function crossMarketplaceProtection(
   inventoryItemId: string,
   soldOnMarketplace: string
-): Promise<void> {
-  // Find all active listings for this item on OTHER marketplaces
+): Promise<number> {
   const otherListings = await prisma.marketplaceListing.findMany({
     where: {
       inventoryItemId,
       marketplace: { not: soldOnMarketplace },
       status: { in: ['Active', 'Draft'] },
     },
+    include: { marketplaceAccount: true },
   });
 
+  let completed = 0;
   for (const listing of otherListings) {
     try {
-      const service = getMarketplaceService(listing.marketplace as 'etsy' | 'ebay');
-
-      // Try to end the listing on the other marketplace
-      if (listing.marketplaceListingId) {
-        await service.endListing(listing.marketplaceListingId, listing.marketplaceListingId);
+      if (listing.status === 'Active' && listing.marketplaceListingId) {
+        if (!listing.marketplaceAccount?.isConnected) {
+          throw new Error(`No connected ${listing.marketplace} account is attached to the listing`);
+        }
+        const service = getMarketplaceService(serviceKey(listing.marketplace));
+        await service.endListing(listing.marketplaceAccount.id, listing.marketplaceListingId);
       }
 
       await prisma.marketplaceListing.update({
         where: { id: listing.id },
         data: {
           status: 'Ended',
-          syncMessage: `Auto-ended: item sold on ${soldOnMarketplace}`,
+          syncStatus: 'Synced',
+          lastSyncAt: new Date(),
+          syncMessage: `Auto-ended because this one-of-a-kind item sold on ${soldOnMarketplace}`,
         },
       });
+      completed++;
 
       await logSyncEvent(
         listing.marketplace,
-        'Delete',
+        'CrossMarketplaceDelist',
         'Success',
-        `Cross-marketplace delist: ended listing on ${listing.marketplace} (item sold on ${soldOnMarketplace})`,
+        `Ended ${listing.marketplace} listing after sale on ${soldOnMarketplace}`,
         inventoryItemId,
-        listing.marketplaceListingId
+        listing.marketplaceListingId || undefined
       );
-
-      console.log(
-        `[CrossMarketplace] Ended ${listing.marketplace} listing ${listing.marketplaceListingId} — item sold on ${soldOnMarketplace}`
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      await prisma.marketplaceListing.update({
+        where: { id: listing.id },
+        data: {
+          syncStatus: 'Error',
+          syncMessage: `URGENT: item sold on ${soldOnMarketplace}, but delisting failed: ${message}`,
+        },
+      });
       await logSyncEvent(
         listing.marketplace,
-        'Delete',
+        'CrossMarketplaceDelist',
         'Failed',
-        `Cross-marketplace delist failed: ${msg}`,
+        `URGENT: cross-marketplace delist failed: ${message}`,
         inventoryItemId,
-        listing.marketplaceListingId
+        listing.marketplaceListingId || undefined
       );
     }
   }
+
+  return completed;
 }
 
 export function scheduleSync(_intervalMs: number): NodeJS.Timeout {
-  // Set up periodic sync. In production, use a proper job queue (bull/better-queue)
-  const intervalMs = _intervalMs || 15 * 60 * 1000; // default 15 minutes
-  console.log(`[SyncEngine] Scheduled sync every ${intervalMs / 1000}s`);
+  const intervalMs = _intervalMs || 15 * 60 * 1000;
+  console.log(`[SyncEngine] Scheduled reconciliation every ${intervalMs / 1000}s`);
 
   return setInterval(async () => {
-    console.log('[SyncEngine] Running scheduled sync...');
     try {
-      const accounts = await prisma.marketplaceAccount.findMany({
+      const accounts = await systemPrisma.marketplaceAccount.findMany({
         where: { isConnected: true },
       });
 
       for (const account of accounts) {
-        await runSync(account.marketplace, account.id);
+        await runWithTenant(
+          {
+            organizationId: account.organizationId,
+            membershipId: 'system',
+            userId: 'system',
+            role: 'Owner',
+          },
+          () => runSync(account.marketplace, account.id)
+        );
       }
-    } catch (err) {
-      console.error('[SyncEngine] Scheduled sync error:', err);
+    } catch (error) {
+      console.error('[SyncEngine] Scheduled sync error:', error);
     }
   }, intervalMs);
 }
-
-// ---- Helpers ----
 
 function mapStatus(raw: string): string {
   const status = raw?.toLowerCase() || '';
@@ -386,13 +393,14 @@ function mapStatus(raw: string): string {
 
 async function getOrCreateUnmatchedItem(): Promise<string> {
   const sku = '__UNMATCHED__';
-  let item = await prisma.inventoryItem.findUnique({ where: { sku } });
+  let item = await prisma.inventoryItem.findFirst({ where: { sku } });
   if (!item) {
     item = await prisma.inventoryItem.create({
       data: {
+        organizationId: requireTenantContext().organizationId,
         sku,
         title: 'Unmatched Marketplace Listing',
-        description: 'Placeholder for listings that could not be matched to inventory items',
+        description: 'Placeholder for listings that still need to be matched to an inventory item',
         status: 'Archived',
         askingPrice: 0,
       },
@@ -416,6 +424,7 @@ async function logSyncEvent(
 ): Promise<void> {
   await prisma.syncEvent.create({
     data: {
+      organizationId: requireTenantContext().organizationId,
       marketplace,
       eventType,
       status,

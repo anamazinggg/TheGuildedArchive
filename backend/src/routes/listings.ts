@@ -3,11 +3,33 @@ import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 import { getMarketplaceService } from '../services/marketplace-factory.js';
+import { runSync } from '../services/sync-engine.js';
 import { calculateCompleteness } from '../services/listing-scorer.js';
 
 const router = Router();
 router.use(authMiddleware);
 router.use(requireWriteForRole('ListingAssistant'));
+
+async function refreshInventoryMarketplaceStatus(inventoryItemId: string): Promise<void> {
+  const item = await prisma.inventoryItem.findUnique({ where: { id: inventoryItemId } });
+  if (!item || ['Sold', 'Shipped', 'Returned', 'Archived'].includes(item.status)) return;
+
+  const activeListings = await prisma.marketplaceListing.findMany({
+    where: { inventoryItemId, status: 'Active' },
+    select: { marketplace: true },
+  });
+  const marketplaces = new Set(activeListings.map((listing) => listing.marketplace));
+
+  let status = 'ReadyToList';
+  if (marketplaces.has('Etsy') && marketplaces.has('Ebay')) status = 'ListedOnBoth';
+  else if (marketplaces.has('Etsy')) status = 'ListedOnEtsy';
+  else if (marketplaces.has('Ebay')) status = 'ListedOnEbay';
+
+  await prisma.inventoryItem.update({
+    where: { id: inventoryItemId },
+    data: { status, dateListed: activeListings.length ? item.dateListed || new Date() : item.dateListed },
+  });
+}
 
 // GET /api/listings — List all marketplace listings (paginated, filterable)
 router.get('/', async (req: AuthRequest, res: Response) => {
@@ -90,6 +112,9 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
             storageLocation: true,
           },
         },
+        marketplaceAccount: {
+          select: { id: true, storeId: true, storeName: true, isConnected: true },
+        },
       },
     });
 
@@ -122,10 +147,11 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       photoOrder,
       etsySpecificFields,
       ebaySpecificFields,
+      marketplaceAccountId,
     } = req.body;
 
     // Validate required fields
-    if (!inventoryItemId || !marketplace || !title || !price) {
+    if (!inventoryItemId || !marketplace || !title || price === undefined || price === null) {
       res.status(400).json({ error: 'inventoryItemId, marketplace, title, and price are required' });
       return;
     }
@@ -170,11 +196,25 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return;
     }
 
+    const connectedAccount = marketplaceAccountId
+      ? await prisma.marketplaceAccount.findUnique({ where: { id: marketplaceAccountId } })
+      : await prisma.marketplaceAccount.findFirst({
+          where: { marketplace, isConnected: true },
+          orderBy: { createdAt: 'asc' },
+        });
+
+    if (connectedAccount && connectedAccount.marketplace !== marketplace) {
+      res.status(400).json({ error: 'Selected marketplace account does not match the listing marketplace' });
+      return;
+    }
+
     const listing = await prisma.marketplaceListing.create({
       data: {
+        organizationId: req.user!.organizationId,
         inventoryItemId,
+        marketplaceAccountId: connectedAccount?.id,
         marketplace,
-        marketplaceListingId: '', // Will be set on publish
+        marketplaceListingId: null,
         title,
         description: description || item.description || '',
         price: price || item.askingPrice || 0,
@@ -187,7 +227,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
         photoOrder: photoOrder ? (typeof photoOrder === 'string' ? photoOrder : JSON.stringify(photoOrder)) : null,
         etsySpecificFields: etsySpecificFields ? JSON.stringify(etsySpecificFields) : null,
         ebaySpecificFields: ebaySpecificFields ? JSON.stringify(ebaySpecificFields) : null,
-        syncStatus: 'Pending',
+        syncStatus: connectedAccount ? 'Pending' : 'NeedsConnection',
       },
       include: {
         inventoryItem: {
@@ -313,12 +353,15 @@ router.post('/:id/publish', async (req: AuthRequest, res: Response) => {
     const service = getMarketplaceService(listing.marketplace.toLowerCase() as 'etsy' | 'ebay');
 
     // Find the connected account
-    const account = await prisma.marketplaceAccount.findFirst({
-      where: {
-        marketplace: listing.marketplace,
-        isConnected: true,
-      },
-    });
+    const account = listing.marketplaceAccountId
+      ? await prisma.marketplaceAccount.findUnique({ where: { id: listing.marketplaceAccountId } })
+      : await prisma.marketplaceAccount.findFirst({
+          where: {
+            marketplace: listing.marketplace,
+            isConnected: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
 
     if (!account) {
       res.status(400).json({ error: `No connected ${listing.marketplace} account` });
@@ -342,6 +385,7 @@ router.post('/:id/publish', async (req: AuthRequest, res: Response) => {
     const updatedListing = await prisma.marketplaceListing.update({
       where: { id },
       data: {
+        marketplaceAccountId: account.id,
         marketplaceListingId: result.listingId,
         marketplaceListingUrl: result.url,
         status: 'Active',
@@ -351,19 +395,16 @@ router.post('/:id/publish', async (req: AuthRequest, res: Response) => {
       },
     });
 
-    // Update inventory status
     await prisma.inventoryItem.update({
       where: { id: listing.inventoryItemId },
-      data: {
-        status: listing.marketplace === 'Etsy' ? 'ListedOnEtsy' : 'ListedOnEbay',
-        dateListed: new Date(),
-        currentMarketplacePrice: listing.price,
-      },
+      data: { currentMarketplacePrice: listing.price },
     });
+    await refreshInventoryMarketplaceStatus(listing.inventoryItemId);
 
     // Create sync event
     await prisma.syncEvent.create({
       data: {
+        organizationId: req.user!.organizationId,
         marketplace: listing.marketplace,
         eventType: 'Export',
         status: 'Success',
@@ -408,9 +449,12 @@ router.post('/:id/end', async (req: AuthRequest, res: Response) => {
     // End on marketplace
     if (listing.marketplaceListingId) {
       const service = getMarketplaceService(listing.marketplace.toLowerCase() as 'etsy' | 'ebay');
-      const account = await prisma.marketplaceAccount.findFirst({
-        where: { marketplace: listing.marketplace, isConnected: true },
-      });
+      const account = listing.marketplaceAccountId
+        ? await prisma.marketplaceAccount.findUnique({ where: { id: listing.marketplaceAccountId } })
+        : await prisma.marketplaceAccount.findFirst({
+            where: { marketplace: listing.marketplace, isConnected: true },
+            orderBy: { createdAt: 'asc' },
+          });
       if (account) {
         await service.endListing(account.id, listing.marketplaceListingId);
       }
@@ -427,19 +471,11 @@ router.post('/:id/end', async (req: AuthRequest, res: Response) => {
       },
     });
 
-    // If item was only listed here, update inventory status
-    if (listing.inventoryItem) {
-      const validStatuses = ['ListedOnEtsy', 'ListedOnEbay', 'ListedOnBoth'];
-      if (validStatuses.includes(listing.inventoryItem.status)) {
-        await prisma.inventoryItem.update({
-          where: { id: listing.inventoryItemId },
-          data: { status: 'ReadyToList' },
-        });
-      }
-    }
+    await refreshInventoryMarketplaceStatus(listing.inventoryItemId);
 
     await prisma.syncEvent.create({
       data: {
+        organizationId: req.user!.organizationId,
         marketplace: listing.marketplace,
         eventType: 'Delete',
         status: 'Success',
@@ -508,9 +544,12 @@ router.post('/bulk-publish', async (req: AuthRequest, res: Response) => {
         }
 
         const service = getMarketplaceService(listing.marketplace.toLowerCase() as 'etsy' | 'ebay');
-        const account = await prisma.marketplaceAccount.findFirst({
-          where: { marketplace: listing.marketplace, isConnected: true },
-        });
+        const account = listing.marketplaceAccountId
+          ? await prisma.marketplaceAccount.findUnique({ where: { id: listing.marketplaceAccountId } })
+          : await prisma.marketplaceAccount.findFirst({
+              where: { marketplace: listing.marketplace, isConnected: true },
+              orderBy: { createdAt: 'asc' },
+            });
 
         if (!account) {
           results.push({ id, status: 'error', error: 'No connected account' });
@@ -529,6 +568,7 @@ router.post('/bulk-publish', async (req: AuthRequest, res: Response) => {
         await prisma.marketplaceListing.update({
           where: { id },
           data: {
+            marketplaceAccountId: account.id,
             marketplaceListingId: result.listingId,
             marketplaceListingUrl: result.url,
             status: 'Active',
@@ -537,11 +577,7 @@ router.post('/bulk-publish', async (req: AuthRequest, res: Response) => {
           },
         });
 
-        await prisma.inventoryItem.update({
-          where: { id: listing.inventoryItemId },
-          data: { status: listing.marketplace === 'Etsy' ? 'ListedOnEtsy' : 'ListedOnEbay', dateListed: new Date() },
-        });
-
+        await refreshInventoryMarketplaceStatus(listing.inventoryItemId);
         results.push({ id, status: 'published' });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -587,9 +623,12 @@ router.post('/bulk-end', async (req: AuthRequest, res: Response) => {
 
         if (listing.marketplaceListingId) {
           const service = getMarketplaceService(listing.marketplace.toLowerCase() as 'etsy' | 'ebay');
-          const account = await prisma.marketplaceAccount.findFirst({
-            where: { marketplace: listing.marketplace, isConnected: true },
-          });
+          const account = listing.marketplaceAccountId
+            ? await prisma.marketplaceAccount.findUnique({ where: { id: listing.marketplaceAccountId } })
+            : await prisma.marketplaceAccount.findFirst({
+                where: { marketplace: listing.marketplace, isConnected: true },
+                orderBy: { createdAt: 'asc' },
+              });
           if (account) {
             await service.endListing(account.id, listing.marketplaceListingId);
           }
@@ -597,8 +636,9 @@ router.post('/bulk-end', async (req: AuthRequest, res: Response) => {
 
         await prisma.marketplaceListing.update({
           where: { id },
-          data: { status: 'Ended', syncMessage: 'Bulk ended' },
+          data: { status: 'Ended', syncStatus: 'Synced', syncMessage: 'Bulk ended', lastSyncAt: new Date() },
         });
+        await refreshInventoryMarketplaceStatus(listing.inventoryItemId);
 
         results.push({ id, status: 'ended' });
       } catch (err) {
@@ -680,6 +720,43 @@ router.get('/completeness/:id', async (req: AuthRequest, res: Response) => {
   }
 });
 
+
+// POST /api/listings/:id/simulate-sale — Prototype-only proof of cross-marketplace protection
+router.post('/:id/simulate-sale', async (req: AuthRequest, res: Response) => {
+  try {
+    const listing = await prisma.marketplaceListing.findUnique({
+      where: { id: req.params.id },
+      include: { marketplaceAccount: true },
+    });
+
+    if (!listing || !listing.marketplaceAccountId || !listing.marketplaceListingId) {
+      res.status(400).json({ error: 'Publish this listing to a connected prototype marketplace first' });
+      return;
+    }
+    if (!listing.marketplaceAccount?.storeId?.startsWith('mock-')) {
+      res.status(400).json({ error: 'Sale simulation is only available for prototype marketplace connections' });
+      return;
+    }
+    if (listing.status !== 'Active') {
+      res.status(400).json({ error: 'Only an active listing can be used for a prototype sale' });
+      return;
+    }
+
+    const service = getMarketplaceService(listing.marketplace.toLowerCase() as 'etsy' | 'ebay');
+    if (!service.simulateSale) {
+      res.status(400).json({ error: 'The connected marketplace does not support prototype sale simulation' });
+      return;
+    }
+
+    const order = await service.simulateSale(listing.marketplaceAccountId, listing.marketplaceListingId);
+    const sync = await runSync(listing.marketplace, listing.marketplaceAccountId);
+    res.json({ order, sync });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ error: `Failed to simulate sale: ${message}` });
+  }
+});
+
 // POST /api/listings/:id/duplicate — Duplicate listing to other marketplace
 router.post('/:id/duplicate', async (req: AuthRequest, res: Response) => {
   try {
@@ -720,11 +797,18 @@ router.post('/:id/duplicate', async (req: AuthRequest, res: Response) => {
       return;
     }
 
+    const targetAccount = await prisma.marketplaceAccount.findFirst({
+      where: { marketplace: targetMarketplace, isConnected: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
     const newListing = await prisma.marketplaceListing.create({
       data: {
+        organizationId: req.user!.organizationId,
         inventoryItemId: source.inventoryItemId,
+        marketplaceAccountId: targetAccount?.id,
         marketplace: targetMarketplace,
-        marketplaceListingId: '',
+        marketplaceListingId: null,
         title: source.title,
         description: source.description,
         price: source.price,
@@ -737,8 +821,10 @@ router.post('/:id/duplicate', async (req: AuthRequest, res: Response) => {
         photoOrder: source.photoOrder,
         etsySpecificFields: targetMarketplace === 'Etsy' ? source.etsySpecificFields : null,
         ebaySpecificFields: targetMarketplace === 'Ebay' ? source.ebaySpecificFields : null,
-        syncStatus: 'Pending',
-        syncMessage: `Duplicated from ${source.marketplace} listing`,
+        syncStatus: targetAccount ? 'Pending' : 'NeedsConnection',
+        syncMessage: targetAccount
+          ? `Duplicated from ${source.marketplace} listing`
+          : `Connect ${targetMarketplace} before publishing this linked draft`,
       },
       include: {
         inventoryItem: {
@@ -747,17 +833,7 @@ router.post('/:id/duplicate', async (req: AuthRequest, res: Response) => {
       },
     });
 
-    // Update inventory status to ListedOnBoth if source is active
-    if (source.status === 'Active') {
-      const itemStatus = source.inventoryItem.status;
-      const validStatuses = ['ListedOnEtsy', 'ListedOnEbay'];
-      if (validStatuses.includes(itemStatus)) {
-        await prisma.inventoryItem.update({
-          where: { id: source.inventoryItemId },
-          data: { status: 'ListedOnBoth' },
-        });
-      }
-    }
+    await refreshInventoryMarketplaceStatus(source.inventoryItemId);
 
     res.status(201).json({ listing: newListing });
   } catch (error) {

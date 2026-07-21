@@ -8,92 +8,105 @@ interface User {
   role: string;
 }
 
+interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  niche: string;
+}
+
+interface AuthResponse {
+  token: string;
+  user: User;
+  organization: Organization;
+}
+
 interface AuthContextType {
   user: User | null;
+  organization: Organization | null;
   token: string | null;
   isLoading: boolean;
   isFirstRun: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  register: (email: string, password: string, name: string, businessName: string) => Promise<void>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const TOKEN_KEY = 'gilded_token';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('gilded_token'));
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [isLoading, setIsLoading] = useState(true);
-  const [isFirstRun, setIsFirstRun] = useState(false);
 
-  // Check if this is a first-run (no users exist) by trying to get /api/auth/me without token
   useEffect(() => {
-    async function checkFirstRun() {
-      try {
-        const res = await api.get<{ user: User }>('/auth/me', token || undefined);
-        setUser(res.user);
-        setIsFirstRun(false);
-      } catch {
-        // If no token, check if first run
-        if (!token) {
-          try {
-            // Try a simple get to see if the server responds
-            await api.get('/auth/me');
-          } catch {
-            // If 401, not first run. If 404 maybe first run.
-            setIsFirstRun(true);
-          }
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    checkFirstRun();
-  }, []);
-
-  // Verify token on mount
-  useEffect(() => {
-    if (token) {
-      api.get<{ user: User }>('/auth/me', token)
-        .then((res) => {
-          setUser(res.user);
-          setIsFirstRun(false);
-        })
-        .catch(() => {
-          localStorage.removeItem('gilded_token');
-          setToken(null);
-          setUser(null);
-        })
-        .finally(() => setIsLoading(false));
-    } else {
+    if (!token) {
       setIsLoading(false);
+      return;
     }
-  }, []);
+
+    api.get<{ user: User; organization: Organization }>('/auth/me', token)
+      .then((response) => {
+        setUser(response.user);
+        setOrganization(response.organization);
+      })
+      .catch(() => {
+        localStorage.removeItem(TOKEN_KEY);
+        setToken(null);
+        setUser(null);
+        setOrganization(null);
+      })
+      .finally(() => setIsLoading(false));
+  }, [token]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await api.post<{ token: string; user: User }>('/auth/login', { email, password });
-    localStorage.setItem('gilded_token', res.token);
-    setToken(res.token);
-    setUser(res.user);
-    setIsFirstRun(false);
+    const response = await api.post<AuthResponse>('/auth/login', { email, password });
+    localStorage.setItem(TOKEN_KEY, response.token);
+    setToken(response.token);
+    setUser(response.user);
+    setOrganization(response.organization);
   }, []);
 
-  const register = useCallback(async (email: string, password: string, name: string) => {
-    const res = await api.post<{ token: string; user: User }>('/auth/register', { email, password, name });
-    localStorage.setItem('gilded_token', res.token);
-    setToken(res.token);
-    setUser(res.user);
-    setIsFirstRun(false);
+  const register = useCallback(async (
+    email: string,
+    password: string,
+    name: string,
+    businessName: string
+  ) => {
+    const response = await api.post<AuthResponse>('/auth/register', {
+      email,
+      password,
+      name,
+      businessName,
+    });
+    localStorage.setItem(TOKEN_KEY, response.token);
+    setToken(response.token);
+    setUser(response.user);
+    setOrganization(response.organization);
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('gilded_token');
+    localStorage.removeItem(TOKEN_KEY);
     setToken(null);
     setUser(null);
+    setOrganization(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, isFirstRun, login, register, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        organization,
+        token,
+        isLoading,
+        isFirstRun: true,
+        login,
+        register,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

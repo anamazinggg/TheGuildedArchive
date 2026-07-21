@@ -1,6 +1,7 @@
 // eBay marketplace service — OAuth 2.0 Authorization Code Grant
 // Falls back to mock mode when EBAY_APP_ID is not configured
 import { v4 as uuidv4 } from 'uuid';
+import prisma from '../lib/prisma.js';
 import {
   MarketplaceService,
   MarketplaceListingData,
@@ -25,8 +26,6 @@ class EbayService implements MarketplaceService {
   private isMock: boolean;
   private mockService: MarketplaceService | null = null;
 
-  // In-memory state storage
-  private oauthStates: Map<string, string> = new Map();
 
   constructor() {
     this.appId = process.env.EBAY_APP_ID || null;
@@ -52,16 +51,24 @@ class EbayService implements MarketplaceService {
 
   // ---- Public Interface ----
 
-  async connect(): Promise<{ url: string; state: string }> {
+  async connect(organizationId: string): Promise<{ url: string; state: string }> {
     if (this.isMock) {
       console.log('[eBay] No credentials configured, using mock mode');
-      return (await this.getMockService()).connect();
+      return (await this.getMockService()).connect(organizationId);
     }
 
     const state = uuidv4();
     const redirectUri = this.redirectUri || 'http://localhost:3000/api/integrations/ebay/callback';
 
-    this.oauthStates.set(state, redirectUri);
+    await prisma.marketplaceAuthorization.create({
+      data: {
+        organizationId,
+        marketplace: 'Ebay',
+        state,
+        redirectUri,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
 
     const scopes = [
       'https://api.ebay.com/oauth/api_scope/sell.inventory',
@@ -82,7 +89,7 @@ class EbayService implements MarketplaceService {
     return { url, state };
   }
 
-  async handleCallback(code: string, state: string): Promise<{
+  async handleCallback(code: string, state: string, organizationId: string): Promise<{
     accessToken: string;
     refreshToken: string;
     storeId: string;
@@ -90,14 +97,22 @@ class EbayService implements MarketplaceService {
     expiresIn?: number;
   }> {
     if (this.isMock) {
-      return (await this.getMockService()).handleCallback(code, state);
+      return (await this.getMockService()).handleCallback(code, state, organizationId);
     }
 
-    const redirectUri = this.oauthStates.get(state);
-    if (!redirectUri) {
-      throw new Error('Invalid OAuth state');
+    const authorization = await prisma.marketplaceAuthorization.findFirst({
+      where: {
+        state,
+        marketplace: 'Ebay',
+        organizationId,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!authorization) {
+      throw new Error('Invalid or expired OAuth state');
     }
-    this.oauthStates.delete(state);
+    await prisma.marketplaceAuthorization.delete({ where: { id: authorization.id } });
+    const redirectUri = authorization.redirectUri;
 
     // Exchange code for token
     const credentials = Buffer.from(`${this.appId}:${this.certId}`).toString('base64');

@@ -178,6 +178,7 @@ router.post('/', receiptUpload.single('receipt'), async (req: AuthRequest, res: 
 
     const expense = await prisma.expense.create({
       data: {
+        organizationId: req.user!.organizationId,
         id: uuidv4(),
         category,
         vendor: vendor || null,

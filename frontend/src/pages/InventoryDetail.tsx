@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig, MarketplaceId } from '../config/product';
 
 interface ExistingListing {
   id: string;
@@ -88,9 +89,9 @@ interface InventoryItem {
   storageLocation: StorageLocation | null;
 }
 
-const categories = ['Ring', 'Necklace', 'Bracelet', 'Earrings', 'Brooch', 'Watch', 'Other'];
-const types = ['Antique', 'Vintage', 'Estate', 'Reproduction', 'Unknown'];
-const conditions = ['Mint', 'Excellent', 'VeryGood', 'Good', 'Fair', 'Poor', 'AsIs'];
+const categories = [...productConfig.categories];
+const types = [...productConfig.types];
+const conditions = [...productConfig.conditions];
 const statuses = ['Draft', 'NeedsPhotos', 'NeedsResearch', 'ReadyToList', 'ListedOnEtsy', 'ListedOnEbay', 'ListedOnBoth', 'Reserved', 'Sold', 'Shipped', 'Returned', 'Delisted', 'Archived'];
 
 const formatCond = (c: string) => c.replace(/([A-Z])/g, ' $1').trim();
@@ -105,6 +106,7 @@ export default function InventoryDetail() {
   const [item, setItem] = useState<InventoryItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [listingTargets, setListingTargets] = useState<MarketplaceId[]>([]);
   const [error, setError] = useState('');
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([]);
@@ -216,6 +218,14 @@ export default function InventoryDetail() {
     );
   };
 
+  const toggleListingTarget = (marketplace: MarketplaceId) => {
+    setListingTargets((current) =>
+      current.includes(marketplace)
+        ? current.filter((target) => target !== marketplace)
+        : [...current, marketplace]
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -234,15 +244,21 @@ export default function InventoryDetail() {
       purchaseDate: form.purchaseDate || undefined,
       storageLocationId: form.storageLocationId || undefined,
       tagIds: selectedTagIds,
+      listingTargets: isNew ? listingTargets : undefined,
     };
 
     try {
       if (isNew) {
-        await api.post('/inventory', payload, token || undefined);
+        const response = await api.post<{ item: InventoryItem; listingDrafts: ExistingListing[] }>(
+          '/inventory',
+          payload,
+          token || undefined
+        );
+        navigate(`/inventory/${response.item.id}`);
       } else {
         await api.put(`/inventory/${id}`, payload, token || undefined);
+        navigate('/inventory');
       }
-      navigate('/inventory');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
@@ -745,6 +761,43 @@ export default function InventoryDetail() {
             </div>
           </div>
 
+          {isNew && (
+            <div className="card">
+              <h2 className="font-semibold text-gray-900 mb-2">Marketplace destinations</h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Prepare a listing draft as part of adding this item. Select either marketplace or both.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {productConfig.marketplaces.map((marketplace) => (
+                  <label
+                    key={marketplace.id}
+                    className={`flex items-center gap-3 rounded-lg border-2 p-4 cursor-pointer transition-colors ${
+                      listingTargets.includes(marketplace.id)
+                        ? 'border-primary-400 bg-primary-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={listingTargets.includes(marketplace.id)}
+                      onChange={() => toggleListingTarget(marketplace.id)}
+                      className="rounded text-primary-600"
+                    />
+                    <div>
+                      <p className="font-medium text-gray-900">Create {marketplace.label} draft</p>
+                      <p className="text-xs text-gray-500">Review photos and marketplace details before publishing.</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {listingTargets.length === 2 && (
+                <div className="mt-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  Both listings stay linked to this single inventory record. A sale on either marketplace triggers removal of the other listing.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Tags */}
           <div className="card">
             <h2 className="font-semibold text-gray-900 mb-4">Tags</h2>
@@ -770,7 +823,7 @@ export default function InventoryDetail() {
 
         <div className="mt-6 flex gap-3">
           <button type="submit" disabled={saving} className="btn-primary">
-            {saving ? 'Saving...' : isNew ? 'Create Item' : 'Save Changes'}
+            {saving ? 'Saving...' : isNew ? (listingTargets.length ? 'Create Item & Listing Drafts' : 'Create Item') : 'Save Changes'}
           </button>
           <button type="button" onClick={() => navigate('/inventory')} className="btn-secondary">Cancel</button>
         </div>

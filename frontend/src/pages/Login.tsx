@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
+import { productConfig } from '../config/product';
 
 export default function Login() {
-  const { login, isFirstRun } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,7 +29,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-amber-50">
       <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="font-serif font-bold text-3xl text-primary-800">The Gilded Archive</h1>
+          <h1 className="font-serif font-bold text-3xl text-primary-800">{productConfig.productName}</h1>
           <p className="text-gray-500 mt-2">Sign in to your account</p>
         </div>
 
@@ -66,14 +67,12 @@ export default function Login() {
           </button>
         </form>
 
-        {isFirstRun && (
-          <p className="text-center mt-4 text-sm text-gray-500">
-            No account yet?{' '}
-            <Link to="/register" className="text-primary-600 hover:text-primary-700 font-medium">
-              Create owner account
-            </Link>
-          </p>
-        )}
+        <p className="text-center mt-4 text-sm text-gray-500">
+          New storefront?{' '}
+          <Link to="/register" className="text-primary-600 hover:text-primary-700 font-medium">
+            Create a workspace
+          </Link>
+        </p>
       </div>
     </div>
   );

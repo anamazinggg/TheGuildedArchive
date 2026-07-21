@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig } from '../config/product';
 
 interface InventoryItem {
   id: string;
@@ -28,8 +29,7 @@ interface InventoryItem {
 }
 
 const marketplaces = [
-  { value: 'Etsy', label: 'Etsy' },
-  { value: 'Ebay', label: 'eBay' },
+  ...productConfig.marketplaces.map((marketplace) => ({ value: marketplace.id, label: marketplace.label })),
   { value: 'Both', label: 'Both (Etsy + eBay)' },
 ];
 

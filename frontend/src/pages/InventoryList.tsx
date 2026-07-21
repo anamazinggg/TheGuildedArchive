@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig } from '../config/product';
 
 interface Tag {
   id: string;
@@ -98,8 +99,8 @@ export default function InventoryList() {
     }
   };
 
-  const handleExport = (type: string) => {
-    let url = '/api/inventory/export';
+  const handleExport = async (type: string) => {
+    let url = '/inventory/export';
     if (type === 'sold') {
       url += '?sold=true';
     } else if (type === 'filtered') {
@@ -109,9 +110,19 @@ export default function InventoryList() {
       if (search) params.set('search', search);
       if (params.toString()) url += '?' + params.toString();
     }
-    // Trigger download
-    window.open(url, '_blank');
-    setShowExportMenu(false);
+    try {
+      const blob = await api.download(url, token || undefined);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `inventory-export-${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Failed to export inventory:', err);
+    } finally {
+      setShowExportMenu(false);
+    }
   };
 
   const statusColors: Record<string, string> = {
@@ -211,13 +222,9 @@ export default function InventoryList() {
             className="input-field w-40"
           >
             <option value="">All Categories</option>
-            <option value="Ring">Ring</option>
-            <option value="Necklace">Necklace</option>
-            <option value="Bracelet">Bracelet</option>
-            <option value="Earrings">Earrings</option>
-            <option value="Brooch">Brooch</option>
-            <option value="Watch">Watch</option>
-            <option value="Other">Other</option>
+            {productConfig.categories.map((category) => (
+              <option key={category} value={category}>{category}</option>
+            ))}
           </select>
           <button type="submit" className="btn-primary">Search</button>
         </form>

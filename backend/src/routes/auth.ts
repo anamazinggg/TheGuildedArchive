@@ -1,52 +1,104 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../lib/prisma.js';
-import { signToken, authMiddleware, AuthRequest } from '../lib/auth.js';
+import { signToken } from '../lib/auth.js';
+import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-// POST /api/auth/register — Create owner account (first-run only)
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50) || 'store';
+}
+
+async function uniqueOrganizationSlug(name: string): Promise<string> {
+  const base = slugify(name);
+  let candidate = base;
+  let suffix = 2;
+  while (await prisma.organization.findUnique({ where: { slug: candidate } })) {
+    candidate = `${base}-${suffix++}`;
+  }
+  return candidate;
+}
+
+// POST /api/auth/register — Create a new seller organization and owner membership
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, businessName } = req.body;
 
-    if (!email || !password || !name) {
-      res.status(400).json({ error: 'Email, password, and name are required' });
+    if (!email || !password || !name || !businessName) {
+      res.status(400).json({ error: 'Email, password, name, and business name are required' });
       return;
     }
 
-    // Check if any users exist (first-run only)
-    const userCount = await prisma.user.count();
-    if (userCount > 0) {
-      res.status(403).json({ error: 'Registration is closed. An owner account already exists.' });
+    if (password.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters' });
       return;
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existingUser) {
-      res.status(409).json({ error: 'Email already registered' });
+      res.status(409).json({ error: 'Email already registered. Sign in instead, or ask an owner to add this account to another storefront.' });
       return;
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        name,
-        role: 'Owner',
-      },
+    const slug = await uniqueOrganizationSlug(businessName);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
+          name: businessName.trim(),
+          slug,
+          niche: 'antique-vintage-jewelry',
+        },
+      });
+
+      const user = await tx.user.create({
+        data: {
+          email: normalizedEmail,
+          passwordHash,
+          name: name.trim(),
+        },
+      });
+
+      const membership = await tx.organizationMembership.create({
+        data: {
+          organizationId: organization.id,
+          userId: user.id,
+          role: 'Owner',
+        },
+      });
+
+      return { organization, user, membership };
     });
 
-    const token = signToken({ userId: user.id, email: user.email, role: user.role });
+    const token = signToken({
+      userId: result.user.id,
+      email: result.user.email,
+      organizationId: result.organization.id,
+      membershipId: result.membership.id,
+      role: result.membership.role,
+    });
 
     res.status(201).json({
       token,
       user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
+        id: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        role: result.membership.role,
+      },
+      organization: {
+        id: result.organization.id,
+        name: result.organization.name,
+        slug: result.organization.slug,
+        niche: result.organization.niche,
       },
     });
   } catch (error) {
@@ -55,17 +107,27 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/login — Login, returns JWT
+// POST /api/auth/login — Login to the requested organization or the first active membership
 router.post('/login', async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, organizationId } = req.body;
 
     if (!email || !password) {
       res.status(400).json({ error: 'Email and password are required' });
       return;
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({
+      where: { email: String(email).trim().toLowerCase() },
+      include: {
+        memberships: {
+          where: { status: 'Active' },
+          include: { organization: true },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
     if (!user) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
@@ -77,7 +139,22 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
-    const token = signToken({ userId: user.id, email: user.email, role: user.role });
+    const membership = organizationId
+      ? user.memberships.find((entry) => entry.organizationId === organizationId)
+      : user.memberships[0];
+
+    if (!membership) {
+      res.status(403).json({ error: 'No active storefront membership found' });
+      return;
+    }
+
+    const token = signToken({
+      userId: user.id,
+      email: user.email,
+      organizationId: membership.organizationId,
+      membershipId: membership.id,
+      role: membership.role,
+    });
 
     res.json({
       token,
@@ -85,8 +162,20 @@ router.post('/login', async (req: Request, res: Response) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role,
+        role: membership.role,
       },
+      organization: {
+        id: membership.organization.id,
+        name: membership.organization.name,
+        slug: membership.organization.slug,
+        niche: membership.organization.niche,
+      },
+      organizations: user.memberships.map((entry) => ({
+        id: entry.organization.id,
+        name: entry.organization.name,
+        slug: entry.organization.slug,
+        role: entry.role,
+      })),
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -94,20 +183,34 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/auth/me — Get current user info
+// GET /api/auth/me — Get current user and active organization
 router.get('/me', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+    const membership = await prisma.organizationMembership.findUnique({
+      where: { id: req.user!.membershipId },
+      include: { user: true, organization: true },
     });
 
-    if (!user) {
-      res.status(404).json({ error: 'User not found' });
+    if (!membership) {
+      res.status(404).json({ error: 'Membership not found' });
       return;
     }
 
-    res.json({ user });
+    res.json({
+      user: {
+        id: membership.user.id,
+        email: membership.user.email,
+        name: membership.user.name,
+        role: membership.role,
+        createdAt: membership.user.createdAt,
+      },
+      organization: {
+        id: membership.organization.id,
+        name: membership.organization.name,
+        slug: membership.organization.slug,
+        niche: membership.organization.niche,
+      },
+    });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user info' });

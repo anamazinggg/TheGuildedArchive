@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
+import { crossMarketplaceProtection } from '../services/sync-engine.js';
 
 const router = Router();
 
@@ -55,6 +56,7 @@ router.post('/record', async (req: AuthRequest, res: Response) => {
       // 2. Create Order
       const order = await tx.order.create({
         data: {
+          organizationId: req.user!.organizationId,
           id: uuidv4(),
           orderNumber,
           marketplace,
@@ -71,6 +73,7 @@ router.post('/record', async (req: AuthRequest, res: Response) => {
       // 3. Create OrderItem
       const orderItem = await tx.orderItem.create({
         data: {
+          organizationId: req.user!.organizationId,
           id: uuidv4(),
           orderId: order.id,
           inventoryItemId,
@@ -91,6 +94,7 @@ router.post('/record', async (req: AuthRequest, res: Response) => {
       // 5. Create Revenue transaction
       await tx.transaction.create({
         data: {
+          organizationId: req.user!.organizationId,
           id: uuidv4(),
           type: 'Revenue',
           category: 'Sale',
@@ -107,6 +111,7 @@ router.post('/record', async (req: AuthRequest, res: Response) => {
       if (parsedMarketplaceFees > 0) {
         await tx.transaction.create({
           data: {
+            organizationId: req.user!.organizationId,
             id: uuidv4(),
             type: 'Fee',
             category: 'MarketplaceFee',
@@ -124,6 +129,7 @@ router.post('/record', async (req: AuthRequest, res: Response) => {
       if (parsedShippingCost > 0) {
         await tx.transaction.create({
           data: {
+            organizationId: req.user!.organizationId,
             id: uuidv4(),
             type: 'Shipping',
             category: 'ShippingCost',
@@ -139,6 +145,10 @@ router.post('/record', async (req: AuthRequest, res: Response) => {
 
       return order;
     });
+
+    // Delist every remaining Etsy/eBay listing for this one-of-a-kind item.
+    // Drafts are closed locally; active marketplace listings are ended through their attached account.
+    await crossMarketplaceProtection(inventoryItemId, marketplace);
 
     // Fetch complete order with item details
     const createdOrder = await prisma.order.findUnique({

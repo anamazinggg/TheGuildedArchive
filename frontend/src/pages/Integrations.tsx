@@ -77,14 +77,19 @@ export default function Integrations() {
     fetchAll();
   }, [token]);
 
-  const handleMockConnect = async (marketplace: string) => {
+  const handleConnect = async (marketplace: string) => {
     setConnecting(marketplace);
     try {
       const key = marketplace.toLowerCase();
-      await api.get(`/integrations/${key}/mock-callback`, token || undefined);
-      await fetchAll();
+      const response = await api.post<{ url: string }>(`/integrations/${key}/connect`, {}, token || undefined);
+      if (response.url.startsWith('/api/')) {
+        await api.get(response.url.replace('/api', ''), token || undefined);
+        await fetchAll();
+      } else {
+        window.location.assign(response.url);
+      }
     } catch (err) {
-      console.error(`Mock connect ${marketplace} failed:`, err);
+      console.error(`Connect ${marketplace} failed:`, err);
     } finally {
       setConnecting(null);
     }
@@ -114,7 +119,7 @@ export default function Integrations() {
     }
   };
 
-  const isMockMode = true;
+  const isMockMode = true; // The backend automatically chooses real APIs when credentials are configured.
 
   if (loading) {
     return (
@@ -188,7 +193,7 @@ export default function Integrations() {
               </>
             ) : (
               <button
-                onClick={() => handleMockConnect(marketplace)}
+                onClick={() => handleConnect(marketplace)}
                 disabled={isConnecting}
                 className="btn-primary text-sm"
               >
