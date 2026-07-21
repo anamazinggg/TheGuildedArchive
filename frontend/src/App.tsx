@@ -19,6 +19,9 @@ import Orders from './pages/Orders';
 import Revenue from './pages/Revenue';
 import Expenses from './pages/Expenses';
 import Calculator from './pages/Calculator';
+import Analytics from './pages/Analytics';
+import ActionCenter from './pages/ActionCenter';
+import Reports from './pages/Reports';
 import PlaceholderPage from './pages/Placeholder';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -81,9 +84,9 @@ export default function App() {
         <Route path="/revenue" element={<Revenue />} />
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/calculator" element={<Calculator />} />
-        <Route path="/analytics" element={<PlaceholderPage title="Analytics" />} />
-        <Route path="/actions" element={<PlaceholderPage title="Action Center" />} />
-        <Route path="/reports" element={<PlaceholderPage title="Reports" />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/actions" element={<ActionCenter />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
       </Route>
 

@@ -16,7 +16,7 @@ export default function Sidebar() {
       .then(res => setAwaitingShipment(res.pagination.total))
       .catch(() => {});
     // Fetch alerts count
-    api.get<{ total: number }>('/dashboard/alerts', token)
+    api.get<{ total: number }>('/actions/count', token)
       .then(res => setActionCount(res.total))
       .catch(() => {});
   }, [token]);
