@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+
+interface ExistingListing {
+  id: string;
+  marketplace: string;
+  title: string;
+  price: number;
+  status: string;
+  createdAt: string;
+}
 
 interface Tag {
   id: string;
@@ -103,6 +112,8 @@ export default function InventoryDetail() {
   const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [uploadingDocs, setUploadingDocs] = useState(false);
+  const [existingListings, setExistingListings] = useState<ExistingListing[]>([]);
+  const [listingHints, setListingHints] = useState<string[]>([]);
 
   const [form, setForm] = useState({
     sku: '', title: '', description: '', category: 'Other', type: 'Unknown',
@@ -144,7 +155,27 @@ export default function InventoryDetail() {
         storageLocationId: i.storageLocationId || '', status: i.status,
       });
       setSelectedTagIds(i.tags.map((t) => t.tag.id));
-    }
+
+        // Fetch existing listings for this item
+        try {
+          const listingsRes = await api.get<{ listings: ExistingListing[] }>(
+            `/listings?inventoryItemId=${i.id}`,
+            token || undefined
+          );
+          setExistingListings(listingsRes.listings);
+        } catch {
+          setExistingListings([]);
+        }
+
+        // Compute listing completeness hints
+        const hints: string[] = [];
+        if (!i.photos || i.photos.length === 0) hints.push('No photos — add photos to list on marketplaces');
+        if (!i.dimensions && !i.weight) hints.push('Missing measurements');
+        if (!i.conditionNotes) hints.push('Add condition notes for better buyer trust');
+        if (i.purchaseCost === null || i.purchaseCost === undefined) hints.push('Missing purchase cost — add for profit tracking');
+        if (!i.storageLocationId) hints.push('No storage location assigned');
+        setListingHints(hints);
+      }
   };
 
   useEffect(() => {
@@ -460,6 +491,78 @@ export default function InventoryDetail() {
                       Delete
                     </button>
                   </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Existing Listings & Create Listing */}
+      {!isNew && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900">Marketplace Listings</h2>
+            {['Sold', 'Shipped', 'Returned', 'Archived'].includes(item?.status || '') ? (
+              <span className="text-sm text-gray-400">Cannot create listing — item is {item?.status}</span>
+            ) : (
+              <Link
+                to={`/inventory/${item?.id}/create-listing`}
+                className="btn-primary text-sm"
+              >
+                + Create Listing
+              </Link>
+            )}
+          </div>
+
+          {listingHints.length > 0 && (
+            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm font-medium text-yellow-800 mb-2">Listing Readiness:</p>
+              <ul className="space-y-1">
+                {listingHints.map((hint, i) => (
+                  <li key={i} className="text-xs text-yellow-700 flex items-center gap-2">
+                    <span>⚠️</span> {hint}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {existingListings.length === 0 ? (
+            <p className="text-sm text-gray-400">No listings created yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {existingListings.map((l) => (
+                <div
+                  key={l.id}
+                  className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`inline-block px-2 py-0.5 text-xs rounded-full font-medium ${
+                        l.marketplace === 'Etsy'
+                          ? 'bg-orange-100 text-orange-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}
+                    >
+                      {l.marketplace}
+                    </span>
+                    <span className="text-sm font-medium text-gray-700">{l.title}</span>
+                    <span className={`inline-block px-2 py-0.5 text-xs rounded-full font-medium ${
+                      l.status === 'Active' ? 'bg-green-100 text-green-700' :
+                      l.status === 'Draft' ? 'bg-gray-100 text-gray-700' :
+                      l.status === 'Ended' ? 'bg-gray-100 text-gray-500' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {l.status}
+                    </span>
+                  </div>
+                  <Link
+                    to={`/listings/${l.id}`}
+                    className="text-sm text-primary-600 hover:text-primary-700"
+                  >
+                    View Listing →
+                  </Link>
                 </div>
               ))}
             </div>
