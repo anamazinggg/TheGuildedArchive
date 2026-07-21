@@ -6,7 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { stringify } from 'csv-stringify/sync';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const router = Router();
 
 router.use(authMiddleware);
+router.use(requireWriteForRole('Manager'));
 
 const uploadsDir = path.join(__dirname, '..', '..', '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) {

@@ -1,9 +1,10 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requireWriteForRole('Manager'));
 
 // GET /api/reports/sales — Sales report data for CSV export
 router.get('/sales', async (req: AuthRequest, res: Response) => {

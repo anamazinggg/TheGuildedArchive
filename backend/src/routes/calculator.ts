@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 const router = Router();
 
 router.use(authMiddleware);
+router.use(requireWriteForRole('ListingAssistant'));
 
 // Default fee settings
 interface FeeSettings {

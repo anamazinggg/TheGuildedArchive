@@ -1,10 +1,11 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
 router.use(authMiddleware);
+router.use(requireWriteForRole('ListingAssistant'));
 
 // GET /api/tags — List all tags
 router.get('/', async (_req: AuthRequest, res: Response) => {

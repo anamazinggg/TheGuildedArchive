@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +16,8 @@ const router = Router();
 
 // All inventory routes require auth
 router.use(authMiddleware);
+// ListingAssistant+ can write, all can read
+router.use(requireWriteForRole('ListingAssistant'));
 
 // Multer setup for uploads
 const uploadsDir = path.join(__dirname, '..', '..', '..', 'uploads');

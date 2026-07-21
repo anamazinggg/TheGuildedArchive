@@ -5,6 +5,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 const router = Router();
 
 router.use(authMiddleware);
+// Dashboard is read-only, all authenticated users can access
 
 // GET /api/dashboard/summary
 router.get('/summary', async (_req: AuthRequest, res: Response) => {

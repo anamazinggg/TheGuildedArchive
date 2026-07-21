@@ -1,9 +1,11 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 router.use(authMiddleware);
+// Actions: GET for all, PUT (dismiss) requires ListingAssistant+
+router.use(requireWriteForRole('ListingAssistant'));
 
 // In-memory store for snoozed/dismissed alerts
 // Key: "itemId:category", Value: { snoozedUntil?: Date, dismissed: boolean }

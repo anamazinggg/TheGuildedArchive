@@ -19,6 +19,8 @@ import templatesRouter from './routes/templates.js';
 import analyticsRouter from './routes/analytics.js';
 import actionsRouter from './routes/actions.js';
 import reportsRouter from './routes/reports.js';
+import usersRouter from './routes/users.js';
+import activityRouter from './routes/activity.js';
 import { errorHandler } from './middleware/error.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -61,6 +63,8 @@ app.use('/api/listings', listingsRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/actions', actionsRouter);
 app.use('/api/reports', reportsRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/activity', activityRouter);
 
 // SPA fallback for production
 if (process.env.NODE_ENV === 'production') {

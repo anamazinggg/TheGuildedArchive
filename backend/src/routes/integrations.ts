@@ -1,12 +1,13 @@
 // Integration routes — Etsy/eBay OAuth connection management
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 import { getMarketplaceService } from '../services/marketplace-factory.js';
 import { runSync } from '../services/sync-engine.js';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requireWriteForRole('Manager'));
 
 // Simple token encryption helpers (in production, use a proper encryption library)
 function encryptToken(token: string): string {

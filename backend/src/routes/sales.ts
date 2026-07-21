@@ -1,11 +1,12 @@
 import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
 router.use(authMiddleware);
+router.use(requireWriteForRole('Manager'));
 
 // POST /api/sales/record — Record a manual sale
 router.post('/record', async (req: AuthRequest, res: Response) => {

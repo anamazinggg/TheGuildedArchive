@@ -11,15 +11,15 @@ body {
 }
 
 .sidebar-link-active {
-  @apply bg-primary-100 text-primary-900;
+  @apply bg-primary-100 text-primary-900 dark:bg-primary-800 dark:text-primary-100;
 }
 
 .sidebar-link-inactive {
-  @apply text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+  @apply text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white;
 }
 
 .card {
-  @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
+  @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6 dark:bg-gray-800 dark:border-gray-700;
 }
 
 .btn-primary {
@@ -27,7 +27,7 @@ body {
 }
 
 .btn-secondary {
-  @apply bg-gray-100 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors;
+  @apply bg-gray-100 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600;
 }
 
 .btn-danger {
@@ -35,13 +35,29 @@ body {
 }
 
 .input-field {
-  @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-colors;
+  @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-colors dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-400;
 }
 
 .table-header {
-  @apply px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
+  @apply px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400;
 }
 
 .table-cell {
-  @apply px-4 py-3 text-sm text-gray-700;
+  @apply px-4 py-3 text-sm text-gray-700 dark:text-gray-200;
+}
+
+/* Dark mode background overrides */
+.dark body {
+  @apply bg-gray-900;
+}
+
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar {
+  width: 8px;
+}
+.dark ::-webkit-scrollbar-track {
+  @apply bg-gray-800;
+}
+.dark ::-webkit-scrollbar-thumb {
+  @apply bg-gray-600 rounded;
 }

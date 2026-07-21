@@ -10,6 +10,7 @@ import InventoryImport from './pages/InventoryImport';
 import TagsPage from './pages/Tags';
 import StoragePage from './pages/Storage';
 import ScanQR from './pages/ScanQR';
+import Scan from './pages/Scan';
 import Integrations from './pages/Integrations';
 import Listings from './pages/Listings';
 import ListingDetail from './pages/ListingDetail';
@@ -22,6 +23,8 @@ import Calculator from './pages/Calculator';
 import Analytics from './pages/Analytics';
 import ActionCenter from './pages/ActionCenter';
 import Reports from './pages/Reports';
+import SettingsUsers from './pages/SettingsUsers';
+import SettingsActivity from './pages/SettingsActivity';
 import PlaceholderPage from './pages/Placeholder';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -47,8 +50,8 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-gray-400">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="text-gray-400 dark:text-gray-500">Loading...</div>
       </div>
     );
   }
@@ -74,6 +77,7 @@ export default function App() {
         <Route path="/tags" element={<TagsPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/storage/:id" element={<StoragePage />} />
+        <Route path="/scan" element={<Scan />} />
         <Route path="/scan-qr" element={<ScanQR />} />
         <Route path="/integrations" element={<Integrations />} />
         <Route path="/listings" element={<Listings />} />
@@ -88,6 +92,8 @@ export default function App() {
         <Route path="/actions" element={<ActionCenter />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
+        <Route path="/settings/users" element={<SettingsUsers />} />
+        <Route path="/settings/activity" element={<SettingsActivity />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

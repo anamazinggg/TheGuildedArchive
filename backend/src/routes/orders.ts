@@ -1,11 +1,12 @@
 import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
 router.use(authMiddleware);
+router.use(requireWriteForRole('FulfillmentAssistant'));
 
 // GET /api/orders — List orders with pagination, filterable
 router.get('/', async (req: AuthRequest, res: Response) => {

@@ -4,6 +4,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 router.use(authMiddleware);
+// Analytics is read-only, all authenticated users can access
 
 // GET /api/analytics/overview
 router.get('/overview', async (req: AuthRequest, res: Response) => {

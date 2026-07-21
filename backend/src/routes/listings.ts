@@ -1,12 +1,13 @@
 // Listing management routes — marketplace listing CRUD, publishing, and completeness
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, requireWriteForRole, AuthRequest } from '../middleware/auth.js';
 import { getMarketplaceService } from '../services/marketplace-factory.js';
 import { calculateCompleteness } from '../services/listing-scorer.js';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requireWriteForRole('ListingAssistant'));
 
 // GET /api/listings — List all marketplace listings (paginated, filterable)
 router.get('/', async (req: AuthRequest, res: Response) => {

@@ -377,9 +377,20 @@ export default function InventoryDetail() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="font-serif font-bold text-2xl text-gray-900">
-            {isNew ? 'New Inventory Item' : `Edit: ${item?.title}`}
-          </h1>
+          <div className="flex items-center gap-4">
+            <h1 className="font-serif font-bold text-2xl text-gray-900 dark:text-white">
+              {isNew ? 'New Inventory Item' : `Edit: ${item?.title}`}
+            </h1>
+            {!isNew && item && (
+              <img
+                src={`/api/inventory/${item.id}/qrcode`}
+                alt={`QR code for ${item.sku}`}
+                className="w-10 h-10 border border-gray-200 dark:border-gray-600 rounded cursor-pointer hover:scale-150 transition-transform"
+                title="QR Code — click to download"
+                onClick={() => window.open(`/api/inventory/${item.id}/qrcode`, '_blank')}
+              />
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           {!isNew && item && !['Sold', 'Shipped', 'Returned', 'Archived'].includes(item.status) && (
