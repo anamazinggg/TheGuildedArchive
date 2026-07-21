@@ -183,6 +183,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
     const transaction = await prisma.transaction.create({
       data: {
+        organizationId: req.user!.organizationId,
         id: uuidv4(),
         type,
         category: category || null,

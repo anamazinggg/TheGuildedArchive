@@ -323,7 +323,7 @@ router.post('/import/confirm', async (req: AuthRequest, res: Response) => {
         }
 
         // Check if item with this SKU already exists
-        const existing = await prisma.inventoryItem.findUnique({ where: { sku } });
+        const existing = await prisma.inventoryItem.findFirst({ where: { sku } });
 
         if (existing) {
           if (skipDuplicates) {
@@ -387,6 +387,7 @@ router.post('/import/confirm', async (req: AuthRequest, res: Response) => {
 
           await prisma.inventoryItem.create({
             data: {
+              organizationId: req.user!.organizationId,
               sku,
               title: (mappedData.title as string) || sku,
               description: (mappedData.description as string) || '',
@@ -465,7 +466,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// POST /api/inventory — Create item
+// POST /api/inventory — Create an item and optionally prepare Etsy/eBay listing drafts
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
     const {
@@ -475,7 +476,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       authenticityNotes, purchaseSource, purchaseDate, purchaseCost,
       restorationCost, cleaningCost, appraisalCost, packagingCost, shippingCost,
       askingPrice, minAcceptablePrice, currentMarketplacePrice,
-      storageLocationId, status, tagIds,
+      storageLocationId, status, tagIds, listingTargets,
     } = req.body;
 
     if (!sku || !title) {
@@ -483,9 +484,13 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const existing = await prisma.inventoryItem.findUnique({ where: { sku } });
+    const targets = Array.isArray(listingTargets)
+      ? [...new Set(listingTargets.filter((target: string) => ['Etsy', 'Ebay'].includes(target)))]
+      : [];
+
+    const existing = await prisma.inventoryItem.findFirst({ where: { sku } });
     if (existing) {
-      res.status(409).json({ error: 'An item with this SKU already exists' });
+      res.status(409).json({ error: 'An item with this SKU already exists in this storefront' });
       return;
     }
 
@@ -493,39 +498,72 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       (restorationCost || 0) + (cleaningCost || 0) +
       (appraisalCost || 0) + (packagingCost || 0) + (shippingCost || 0);
 
-    const item = await prisma.inventoryItem.create({
-      data: {
-        sku, title, description: description || '',
-        category: category || 'Other', type: type || 'Unknown',
-        estimatedEra, brand, metalType, metalPurity, gemstoneType, gemstoneColor,
-        ringSize, dimensions, weight, condition: condition || 'Good',
-        conditionNotes, restorationHistory, authenticityNotes,
-        purchaseSource,
-        purchaseDate: purchaseDate ? new Date(purchaseDate) : undefined,
-        purchaseCost: purchaseCost || 0,
-        restorationCost: restorationCost || 0,
-        cleaningCost: cleaningCost || 0,
-        appraisalCost: appraisalCost || 0,
-        packagingCost: packagingCost || 0,
-        shippingCost: shippingCost || 0,
-        totalCostBasis,
-        askingPrice: askingPrice || 0,
-        minAcceptablePrice: minAcceptablePrice || 0,
-        currentMarketplacePrice: currentMarketplacePrice || 0,
-        storageLocationId,
-        status: status || 'Draft',
-        tags: tagIds?.length
-          ? { create: tagIds.map((tagId: string) => ({ tagId })) }
-          : undefined,
-      },
-      include: {
-        photos: true,
-        tags: { include: { tag: true } },
-        storageLocation: true,
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      const item = await tx.inventoryItem.create({
+        data: {
+          organizationId: req.user!.organizationId,
+          sku, title, description: description || '',
+          category: category || 'Other', type: type || 'Unknown',
+          estimatedEra, brand, metalType, metalPurity, gemstoneType, gemstoneColor,
+          ringSize, dimensions, weight, condition: condition || 'Good',
+          conditionNotes, restorationHistory, authenticityNotes,
+          purchaseSource,
+          purchaseDate: purchaseDate ? new Date(purchaseDate) : undefined,
+          purchaseCost: purchaseCost || 0,
+          restorationCost: restorationCost || 0,
+          cleaningCost: cleaningCost || 0,
+          appraisalCost: appraisalCost || 0,
+          packagingCost: packagingCost || 0,
+          shippingCost: shippingCost || 0,
+          totalCostBasis,
+          askingPrice: askingPrice || 0,
+          minAcceptablePrice: minAcceptablePrice || 0,
+          currentMarketplacePrice: currentMarketplacePrice || askingPrice || 0,
+          storageLocationId,
+          status: status || 'Draft',
+          tags: tagIds?.length
+            ? { create: tagIds.map((tagId: string) => ({ tagId, organizationId: req.user!.organizationId })) }
+            : undefined,
+        },
+        include: {
+          photos: true,
+          tags: { include: { tag: true } },
+          storageLocation: true,
+        },
+      });
+
+      const listingDrafts: any[] = [];
+      for (const marketplace of targets) {
+        const account = await tx.marketplaceAccount.findFirst({
+          where: { marketplace, isConnected: true },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        const listing = await tx.marketplaceListing.create({
+          data: {
+            organizationId: req.user!.organizationId,
+            inventoryItemId: item.id,
+            marketplaceAccountId: account?.id,
+            marketplace,
+            marketplaceListingId: null,
+            title: item.title,
+            description: item.description,
+            price: item.askingPrice || 0,
+            quantity: 1,
+            status: 'Draft',
+            syncStatus: account ? 'Pending' : 'NeedsConnection',
+            syncMessage: account
+              ? 'Draft created with inventory item — review and publish when complete'
+              : `Connect ${marketplace} before publishing this draft`,
+          },
+        });
+        listingDrafts.push(listing);
+      }
+
+      return { item, listingDrafts };
     });
 
-    res.status(201).json({ item });
+    res.status(201).json(result);
   } catch (error) {
     console.error('Create inventory item error:', error);
     res.status(500).json({ error: 'Failed to create inventory item' });
@@ -553,7 +591,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     } = req.body;
 
     if (sku && sku !== existing.sku) {
-      const dup = await prisma.inventoryItem.findUnique({ where: { sku } });
+      const dup = await prisma.inventoryItem.findFirst({ where: { sku } });
       if (dup) {
         res.status(409).json({ error: 'An item with this SKU already exists' });
         return;
@@ -571,7 +609,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       await prisma.inventoryTag.deleteMany({ where: { inventoryItemId: id } });
       if (tagIds.length > 0) {
         await prisma.inventoryTag.createMany({
-          data: tagIds.map((tagId: string) => ({ inventoryItemId: id, tagId })),
+          data: tagIds.map((tagId: string) => ({ organizationId: req.user!.organizationId, inventoryItemId: id, tagId })),
         });
       }
     }
@@ -683,6 +721,7 @@ router.post('/:id/photos', photoUpload.array('photos', 10), async (req: AuthRequ
       files.map((file, idx) =>
         prisma.inventoryPhoto.create({
           data: {
+            organizationId: req.user!.organizationId,
             inventoryItemId: id,
             filename: file.filename,
             originalName: file.originalname,
@@ -826,6 +865,7 @@ router.post('/:id/documents', docUpload.array('documents', 5), async (req: AuthR
       files.map((file) =>
         prisma.inventoryDocument.create({
           data: {
+            organizationId: req.user!.organizationId,
             inventoryItemId: id,
             filename: file.filename,
             originalName: file.originalname,

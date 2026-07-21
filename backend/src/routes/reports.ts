@@ -233,7 +233,7 @@ router.get('/tax', async (req: AuthRequest, res: Response) => {
 router.post('/backup', async (req: AuthRequest, res: Response) => {
   try {
     const [
-      users,
+      memberships,
       inventoryItems,
       inventoryPhotos,
       inventoryDocuments,
@@ -251,7 +251,10 @@ router.post('/backup', async (req: AuthRequest, res: Response) => {
       activityLogs,
       analyticsSnapshots,
     ] = await Promise.all([
-      prisma.user.findMany(),
+      prisma.organizationMembership.findMany({
+        where: { organizationId: req.user!.organizationId, status: 'Active' },
+        include: { user: true },
+      }),
       prisma.inventoryItem.findMany(),
       prisma.inventoryPhoto.findMany(),
       prisma.inventoryDocument.findMany(),
@@ -274,7 +277,15 @@ router.post('/backup', async (req: AuthRequest, res: Response) => {
       exportedAt: new Date().toISOString(),
       version: '1.0',
       data: {
-        users: users.map(u => ({ ...u, passwordHash: '[REDACTED]' })),
+        users: memberships.map((membership) => ({
+          id: membership.user.id,
+          email: membership.user.email,
+          name: membership.user.name,
+          role: membership.role,
+          membershipId: membership.id,
+          createdAt: membership.user.createdAt,
+          updatedAt: membership.user.updatedAt,
+        })),
         inventoryItems,
         inventoryPhotos,
         inventoryDocuments,

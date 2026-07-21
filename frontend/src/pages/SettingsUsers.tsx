@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { productConfig } from '../config/product';
 
 interface User {
   id: string;
@@ -27,7 +28,7 @@ export default function SettingsUsers() {
   const [editRole, setEditRole] = useState<{ user: User; role: string } | null>(null);
 
   useEffect(() => {
-    document.title = 'Staff Users — The Gilded Archive';
+    document.title = `Staff Users — ${productConfig.productName}`;
   }, []);
 
   const fetchUsers = async () => {

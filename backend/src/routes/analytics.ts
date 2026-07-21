@@ -23,8 +23,6 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
       totalCost,
       soldItems,
       allItemsEver,
-      ordersWithItems,
-      allOrders,
     ] = await Promise.all([
       prisma.inventoryItem.count({
         where: { deletedAt: null, status: { in: activeStatuses } },
@@ -49,12 +47,6 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
       prisma.inventoryItem.count({
         where: { deletedAt: null },
       }),
-      prisma.order.findMany({
-        where: Object.keys(dateFilter).length > 0
-          ? { saleDate: dateFilter }
-          : {},
-        select: { saleDate: true, orderItems: { select: { salePrice: true, inventoryItem: { select: { totalCostBasis: true } } } } },
-      }),
     ]);
 
     const sellingItems = await prisma.inventoryItem.findMany({
@@ -70,18 +62,7 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
     const totalSold = soldItems.length;
     const sellThroughRate = allItemsEver > 0 ? (totalSold / allItemsEver) * 100 : 0;
 
-    // Average days to sell
-    let totalDays = 0;
-    let itemsWithDays = 0;
-    for (const item of sellingItems) {
-      const listDate = item.dateListed || item.createdAt;
-      // We estimate using orderItems; find matching orders
-      for (const oi of soldItems) {
-        if (oi.inventoryItem?.id === item.dateListed) continue; // skip self-match
-      }
-    }
-    
-    // Better: compute from orderItems
+    // Average days to sell, computed from the linked sale order.
     let sumDays = 0;
     let countDays = 0;
     for (const oi of soldItems) {

@@ -206,6 +206,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       // Create the order
       const order = await tx.order.create({
         data: {
+          organizationId: req.user!.organizationId,
           id: uuidv4(),
           orderNumber,
           marketplace,
@@ -229,6 +230,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
         await tx.orderItem.create({
           data: {
+            organizationId: req.user!.organizationId,
             id: uuidv4(),
             orderId: order.id,
             inventoryItemId: item.inventoryItemId,
@@ -249,6 +251,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
         // Create Revenue transaction per item
         await tx.transaction.create({
           data: {
+            organizationId: req.user!.organizationId,
             id: uuidv4(),
             type: 'Revenue',
             category: 'Sale',
@@ -266,6 +269,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       if (parsedShippingCost > 0) {
         await tx.transaction.create({
           data: {
+            organizationId: req.user!.organizationId,
             id: uuidv4(),
             type: 'Shipping',
             category: 'ShippingCost',
@@ -282,6 +286,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       if (parsedSalesTax > 0) {
         await tx.transaction.create({
           data: {
+            organizationId: req.user!.organizationId,
             id: uuidv4(),
             type: 'Tax',
             category: 'SalesTax',
@@ -364,6 +369,7 @@ router.post('/:id/refund', async (req: AuthRequest, res: Response) => {
       // Create Refund transaction
       await tx.transaction.create({
         data: {
+          organizationId: req.user!.organizationId,
           id: uuidv4(),
           type: 'Refund',
           category: 'Refund',
@@ -441,6 +447,7 @@ router.post('/:id/return', async (req: AuthRequest, res: Response) => {
       // Create a Refund transaction to track the return
       await tx.transaction.create({
         data: {
+          organizationId: req.user!.organizationId,
           id: uuidv4(),
           type: 'Refund',
           category: 'Return',

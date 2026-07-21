@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { productConfig } from '../config/product';
 
 interface ActivityLogEntry {
   id: string;
@@ -32,7 +33,7 @@ export default function SettingsActivity() {
   const [sortOrder, setSortOrder] = useState('desc');
 
   useEffect(() => {
-    document.title = 'Activity Log — The Gilded Archive';
+    document.title = `Activity Log — ${productConfig.productName}`;
   }, []);
 
   const fetchLogs = async (page = 1) => {

@@ -1,3 +1,4 @@
+import { productConfig } from './config/product.js';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -22,12 +23,20 @@ import reportsRouter from './routes/reports.js';
 import usersRouter from './routes/users.js';
 import activityRouter from './routes/activity.js';
 import { errorHandler } from './middleware/error.js';
+import { scheduleSync } from './services/sync-engine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
+
+if (process.env.NODE_ENV === 'production') {
+  const missing = ['JWT_SECRET', 'TOKEN_ENCRYPTION_KEY'].filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(`Missing required production secrets: ${missing.join(', ')}`);
+  }
+}
 
 // Middleware
 app.use(cors({
@@ -78,8 +87,12 @@ if (process.env.NODE_ENV === 'production') {
 app.use(errorHandler);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`The Gilded Archive backend running on port ${PORT}`);
+  console.log(`${productConfig.productName} backend running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  if (process.env.SYNC_ENABLED !== 'false' && process.env.DISABLE_SCHEDULED_SYNC !== 'true') {
+    scheduleSync(parseInt(process.env.SYNC_INTERVAL_MS || '900000', 10));
+  }
 });
 
 export default app;

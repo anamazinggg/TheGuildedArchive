@@ -99,8 +99,8 @@ export interface SaleResult {
 }
 
 export interface MarketplaceService {
-  connect(): Promise<{ url: string; state: string }>;
-  handleCallback(code: string, state: string): Promise<{
+  connect(organizationId: string): Promise<{ url: string; state: string }>;
+  handleCallback(code: string, state: string, organizationId: string): Promise<{
     accessToken: string;
     refreshToken: string;
     storeId: string;
@@ -114,4 +114,5 @@ export interface MarketplaceService {
   endListing(accountId: string, listingId: string): Promise<void>;
   getOrders(accountId: string, since?: Date): Promise<OrderData[]>;
   getListingAnalytics(accountId: string, listingId: string): Promise<AnalyticsData>;
+  simulateSale?(accountId: string, listingId: string): Promise<OrderData>;
 }

@@ -2,6 +2,7 @@
 // Falls back to mock mode when ETSY_CLIENT_ID is not configured
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import prisma from '../lib/prisma.js';
 import {
   MarketplaceService,
   MarketplaceListingData,
@@ -76,8 +77,6 @@ class EtsyService implements MarketplaceService {
   private isMock: boolean;
   private mockService: MarketplaceService | null = null;
 
-  // PKCE state storage (in-memory, would use DB in production)
-  private pkceStates: Map<string, { codeVerifier: string; redirectUri: string }> = new Map();
 
   constructor() {
     this.clientId = process.env.ETSY_CLIENT_ID || null;
@@ -103,17 +102,26 @@ class EtsyService implements MarketplaceService {
 
   // ---- Public Interface ----
 
-  async connect(): Promise<{ url: string; state: string }> {
+  async connect(organizationId: string): Promise<{ url: string; state: string }> {
     if (this.isMock) {
       console.log('[Etsy] No credentials configured, using mock mode');
-      return (await this.getMockService()).connect();
+      return (await this.getMockService()).connect(organizationId);
     }
 
     const state = uuidv4();
     const { codeVerifier, codeChallenge } = this.generatePKCE();
     const redirectUri = this.redirectUri || 'http://localhost:3000/api/integrations/etsy/callback';
 
-    this.pkceStates.set(state, { codeVerifier, redirectUri });
+    await prisma.marketplaceAuthorization.create({
+      data: {
+        organizationId,
+        marketplace: 'Etsy',
+        state,
+        codeVerifier,
+        redirectUri,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -130,7 +138,7 @@ class EtsyService implements MarketplaceService {
     return { url, state };
   }
 
-  async handleCallback(code: string, state: string): Promise<{
+  async handleCallback(code: string, state: string, organizationId: string): Promise<{
     accessToken: string;
     refreshToken: string;
     storeId: string;
@@ -138,14 +146,21 @@ class EtsyService implements MarketplaceService {
     expiresIn?: number;
   }> {
     if (this.isMock) {
-      return (await this.getMockService()).handleCallback(code, state);
+      return (await this.getMockService()).handleCallback(code, state, organizationId);
     }
 
-    const pkceData = this.pkceStates.get(state);
-    if (!pkceData) {
-      throw new Error('Invalid OAuth state');
+    const pkceData = await prisma.marketplaceAuthorization.findFirst({
+      where: {
+        state,
+        marketplace: 'Etsy',
+        organizationId,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!pkceData?.codeVerifier) {
+      throw new Error('Invalid or expired OAuth state');
     }
-    this.pkceStates.delete(state);
+    await prisma.marketplaceAuthorization.delete({ where: { id: pkceData.id } });
 
     // Exchange code for token
     const tokenResponse = await fetch(`${this.baseUrl}/public/oauth/token`, {

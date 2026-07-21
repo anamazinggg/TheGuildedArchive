@@ -110,7 +110,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const existing = await prisma.storageLocation.findUnique({ where: { code } });
+    const existing = await prisma.storageLocation.findFirst({ where: { code } });
     if (existing) {
       res.status(409).json({ error: 'A location with this code already exists' });
       return;
@@ -118,6 +118,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
     const location = await prisma.storageLocation.create({
       data: {
+        organizationId: req.user!.organizationId,
         code, name,
         room: room || null,
         cabinet: cabinet || null,
@@ -150,7 +151,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     const { code, name, room, cabinet, shelf, drawer, tray, box, slot, parentId } = req.body;
 
     if (code && code !== existing.code) {
-      const dup = await prisma.storageLocation.findUnique({ where: { code } });
+      const dup = await prisma.storageLocation.findFirst({ where: { code } });
       if (dup) {
         res.status(409).json({ error: 'A location with this code already exists' });
         return;

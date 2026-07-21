@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { productConfig } from '../config/product';
 
 export default function Scan() {
   const navigate = useNavigate();
@@ -13,7 +14,7 @@ export default function Scan() {
   const scanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    document.title = 'Scan QR — The Gilded Archive';
+    document.title = `Scan QR — ${productConfig.productName}`;
   }, []);
 
   const startScanning = async () => {
