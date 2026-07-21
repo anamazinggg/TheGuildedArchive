@@ -42,6 +42,22 @@ When marketplace credentials are absent, the Integrations screen uses isolated p
 7. Use **Simulate Sale** on either active prototype listing.
 8. Confirm the inventory is sold, the order is recorded once, and the counterpart listing is ended.
 
+## Railway prototype deployment
+
+This repository is configured to deploy as one Railway service. Express serves the built frontend and the API from the same domain.
+
+1. Create a Railway project from this GitHub repository and select the `main` branch.
+2. Attach a volume mounted at `/app/uploads`.
+3. Add these service variables:
+   - `NODE_ENV=production`
+   - `DATABASE_URL=file:/app/uploads/dev.db`
+   - `JWT_SECRET=<long random secret>`
+   - `TOKEN_ENCRYPTION_KEY=<different long random secret>`
+4. Generate a public Railway domain and deploy.
+5. Verify `/api/health`, register two test organizations, and run the prototype Etsy/eBay sale workflow.
+
+The checked-in `railway.json` builds both workspaces, initializes the database on the mounted volume at runtime, starts the production server, and verifies the health endpoint. Etsy and eBay credentials remain optional while using prototype mode.
+
 ## Production boundary
 
 The prototype marketplace adapter is fully runnable. The live Etsy and eBay adapters still need their provider-specific listing, order, webhook, and approval work completed before real customer stores are connected.
